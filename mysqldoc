@@ -1,0 +1,138 @@
+#!/usr/bin/perl 
+# mysqldoc - Auto-Generate a data-dictionary
+
+# Original version by Ryan Lowe, 11 Dec 2007
+
+##
+# @todo
+#   sub getDatabaseMetaData()
+#   sub getDatabaseTables()
+#   sub getTableMetaData()
+##
+
+use strict;
+use warnings;
+use Pod::Usage;
+use Getopt::Long;
+use DBI;
+use Switch;
+
+# Defaults
+my $host;
+my $user;
+my $port;
+my $database;
+my $password = -1;
+
+my $result = GetOptions ( 'host:s'     => \$host,
+                          'database=s' => \$database,
+                          'user:s'     => \$user,
+                          'password:s' => \$password,
+                          'port:i'     => \$port );
+
+$host = $host ? $host : 'localhost';
+$user = $user ? $user : 'root';
+
+if ($password ne -1) {
+
+  $password = $password ? $password : getPass();
+
+} else {
+
+  $password = '';
+
+}
+
+$port = $port ? $port : '3306';
+
+my $dbh = DBI->connect("dbi:mysql:;host=$host;port=$port", $user, $password);
+
+my %table_info = ();
+
+my $table_query = $dbh->prepare("SELECT `table_name`, SUM(`DATA_LENGTH` + `INDEX_LENGTH`) / 1024 / 1024 AS `total_size`, `DATA_LENGTH` / 1024 / 1024 AS `DATA_LENGTH`, `INDEX_LENGTH` / 1024 / 1024 AS `INDEX_LENGTH`, `TABLE_COMMENT` FROM `INFORMATION_SCHEMA`.`TABLES` WHERE `TABLE_SCHEMA` = \"$database\" GROUP BY `table_name`");
+$table_query->execute();
+
+while (my $ref = $table_query->fetchrow_hashref()) {
+
+  $table_info{ $ref->{ 'table_name' } } = { 'TOTAL_SIZE'   =>  $ref->{ 'total_size' },
+                                            'DATA_LENGTH'  =>  $ref->{ 'DATA_LENGTH' },
+                                            'INDEX_LENGTH' =>  $ref->{ 'INDEX_LENGTH' },
+                                            'COMMENT'      =>  $ref->{ 'TABLE_COMMENT' } };
+
+}
+
+for my $table_name (keys(%table_info)) {
+
+  my $column_query = $dbh->prepare("SELECT `column_name`, `DATA_TYPE`, `COLUMN_DEFAULT`, `COLUMN_COMMENT` FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\"");
+
+  $column_query->execute();
+
+  while (my $ref = $column_query->fetchrow_hashref()) {
+
+    $table_info{$table_name}{'COLUMNS'}{ $ref->{ 'column_name' } } = { 'DATA_TYPE' => $ref->{ 'DATA_TYPE' },
+                                                                       'DEFAULT'   => $ref->{ 'COLUMN_DEFAULT' }, 
+                                                                       'COMMENT' => $ref->{ 'COLUMN_COMMENT' } };
+
+  }
+  
+}
+
+&format(%table_info, 'PlainText');
+#use Data::Dumper;
+#print Dumper(\%table_info);
+
+sub getPass {
+
+  print "Password: ";
+  system "stty -echo";
+  chomp(my $passwd = <STDIN>);
+  system "stty echo";
+  print "\n";
+  return $passwd;
+
+}
+
+sub format {
+
+  # Valid formats are: XML, HTML, PlainText (default is PlainText)
+
+  #my %input_hash = $_[0];
+  my $format = $_[1];
+
+  switch ($format) {
+
+    case 'XML' {
+
+    } case 'HTML' {
+
+    } else {
+
+      print "\nDATA DICTIONARY FOR: $database\n\n";
+
+      # PlainText Output 
+      for my $table (keys(%table_info)) {
+
+        print "$table - $table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)\n";
+        print "  $table_info{$table}{'COMMENT'}\n";
+       
+        for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
+
+          print "  $column - $table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}";
+
+          if ($table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}) {
+
+            print "  DEFAULT $table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}";
+  
+          }
+
+          print "\n      $table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}\n";
+
+        }
+
+      }
+
+    }
+
+  }
+ 
+}
