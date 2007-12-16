@@ -1,0 +1,11 @@
+0.0.1 - 13 December 2007
+
+  - Initial Release
+
+0.0.2 - 16 December 2007
+
+  - Added the --help command line option
+  - Added the --output=? command line option
+  - Added the --file=? command line option
+  - Added HTML 4.01 Strict as an output format
+
