@@ -1,15 +1,6 @@
 #!/usr/bin/perl 
 # mysqldoc - Auto-Generate a data-dictionary
 
-# Original version by Ryan Lowe, 11 Dec 2007
-
-##
-# @todo
-#   sub getDatabaseMetaData()
-#   sub getDatabaseTables()
-#   sub getTableMetaData()
-##
-
 use strict;
 use warnings;
 use Pod::Usage;
@@ -18,17 +9,40 @@ use DBI;
 use Switch;
 
 # Defaults
+my $help = 0;
 my $host;
 my $user;
 my $port;
 my $database;
 my $password = -1;
 
-my $result = GetOptions ( 'host:s'     => \$host,
+my $result = GetOptions ( 'help'       => \$help,
+                          'host:s'     => \$host,
                           'database=s' => \$database,
                           'user:s'     => \$user,
                           'password:s' => \$password,
                           'port:i'     => \$port );
+
+pod2usage(2) if $help;
+
+=headl NAME
+
+mysqldoc - Auto-documentation for mysql schema
+
+=headl SYNOPSIS
+
+mysqldoc [options]
+
+  Options:
+    --help                     Display this help and exit.
+    --host=<hostname>          Connect to host.
+    --database=<database>      Database to use.
+    --user=<username>          Username to use when connecting to server.
+    --password[=<password>]    Password to use when connecting to server. If password is
+                               not given, it is asked from the tty.
+    --port=#                   Port number to use for connection.
+
+=cut
 
 $host = $host ? $host : 'localhost';
 $user = $user ? $user : 'root';
