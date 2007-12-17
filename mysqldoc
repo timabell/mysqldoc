@@ -15,34 +15,52 @@ my $user;
 my $port;
 my $database;
 my $password = -1;
+my $version = 0;
+my $filename = 0;
 
-my $result = GetOptions ( 'help'       => \$help,
+my $result = GetOptions ( 'database=s' => \$database,
+                          'file=s'     => \$filename,
+                          'help'       => \$help,
                           'host:s'     => \$host,
-                          'database=s' => \$database,
-                          'user:s'     => \$user,
                           'password:s' => \$password,
-                          'port:i'     => \$port );
+                          'port:i'     => \$port,
+                          'user:s'     => \$user,
+                          'version'    => \$version );
 
 pod2usage(2) if $help;
+__END__
 
-=headl NAME
+=head1 NAME
 
 mysqldoc - Auto-documentation for mysql schema
 
-=headl SYNOPSIS
+=head1 SYNOPSIS
 
 mysqldoc [options]
 
   Options:
+    --database=<database>      Database to use.
+    --file=<filename>          The path and filename in which to save the output.
     --help                     Display this help and exit.
     --host=<hostname>          Connect to host.
-    --database=<database>      Database to use.
-    --user=<username>          Username to use when connecting to server.
     --password[=<password>]    Password to use when connecting to server. If password is
                                not given, it is asked from the tty.
     --port=#                   Port number to use for connection.
+    --user=<username>          Username to use when connecting to server.
+    --version                  Output version information and exit.
+ 
+=head1 DESCRIPTION
+
+mysqldoc is a tool for auto-documentation generation for MySQL 5.0 and above
 
 =cut
+
+if ($version) {
+
+  print "mysqldoc 0.0.2\n";
+  exit(1);
+
+}
 
 $host = $host ? $host : 'localhost';
 $user = $user ? $user : 'root';
@@ -91,9 +109,19 @@ for my $table_name (keys(%table_info)) {
   
 }
 
-&format(%table_info, 'PlainText');
-#use Data::Dumper;
-#print Dumper(\%table_info);
+my $of = &format(%table_info, 'PlainText');
+
+if ($filename) {
+
+  open(OUTFILE, ">$filename") or die "Can't open $filename for writing : $!";;
+  print OUTFILE $of;
+  close(OUTFILE);
+
+} else {
+
+  print $of;
+
+}
 
 sub getPass {
 
@@ -113,6 +141,8 @@ sub format {
   #my %input_hash = $_[0];
   my $format = $_[1];
 
+  my $return_string = '';
+
   switch ($format) {
 
     case 'XML' {
@@ -121,25 +151,25 @@ sub format {
 
     } else {
 
-      print "\nDATA DICTIONARY FOR: $database\n\n";
+      $return_string .= "\nDATA DICTIONARY FOR: $database\n\n";
 
       # PlainText Output 
       for my $table (keys(%table_info)) {
 
-        print "$table - $table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)\n";
-        print "  $table_info{$table}{'COMMENT'}\n";
+        $return_string .= "$table - $table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)\n";
+        $return_string .= "  $table_info{$table}{'COMMENT'}\n";
        
         for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
 
-          print "  $column - $table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}";
+          $return_string .= "  $column - $table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}";
 
           if ($table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}) {
 
-            print "  DEFAULT $table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}";
+            $return_string .= "  DEFAULT $table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}";
   
           }
 
-          print "\n      $table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}\n";
+          $return_string .= "\n      $table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}\n";
 
         }
 
@@ -148,5 +178,6 @@ sub format {
     }
 
   }
- 
+
+  return $return_string; 
 }
