@@ -15,7 +15,7 @@ my $user;
 my $port;
 my $database;
 my $password = -1;
-my $version = 0;
+my $version;
 my $filename = 0;
 
 my $result = GetOptions ( 'database=s' => \$database,
@@ -148,6 +148,35 @@ sub format {
     case 'XML' {
 
     } case 'HTML' {
+
+      $return_string .= '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">' . "\n\n";
+      $return_string .= '<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">';
+      $return_string .= "\n\n<head>\n  <title>DATA DICTIONARY FOR: $database</title>\n</head>\n\n<body>\n\n";
+      $return_string .= "  <table><tr><td><em>DATA DICTIONARY FOR: $database</em></tr></td>";
+
+#do me here
+      for my $table (keys(%table_info)) {
+
+        $return_string .= "<tr><td>$table - $table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)</td></tr>";
+        $return_string .= "<tr><td>&nbsp;&nbsp;$table_info{$table}{'COMMENT'}</td></tr>";
+        
+        for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
+
+          $return_string .= "<tr><td>$column - $table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}";
+
+          if ($table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}) {
+
+            $return_string .= "  DEFAULT $table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}";
+
+          }
+
+          $return_string .= "</td></tr><tr><td>$table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}</td></tr>";
+
+        }
+
+      }
+
+      $return_string .= "\n\n  </table>\n\n</body>\n\n</html>";
 
     } else {
 
