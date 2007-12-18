@@ -17,18 +17,19 @@ my $database;
 my $password = -1;
 my $version;
 my $filename = 0;
+my $engines = 1;
 
-my $result = GetOptions ( 'database=s' => \$database,
-                          'file=s'     => \$filename,
-                          'help'       => \$help,
-                          'host:s'     => \$host,
-                          'password:s' => \$password,
-                          'port:i'     => \$port,
-                          'user:s'     => \$user,
-                          'version'    => \$version );
+my $result = GetOptions ( 'database=s'    => \$database,
+                          'file=s'        => \$filename,
+                          'help'          => \$help,
+                          'host:s'        => \$host,
+                          'password:s'    => \$password,
+                          'port:i'        => \$port,
+                          'show-engines!' => \$engines,
+                          'user:s'        => \$user,
+                          'version'       => \$version );
 
 pod2usage(2) if $help;
-__END__
 
 =head1 NAME
 
@@ -46,6 +47,8 @@ mysqldoc [options]
     --password[=<password>]    Password to use when connecting to server. If password is
                                not given, it is asked from the tty.
     --port=#                   Port number to use for connection.
+    --show-engines             Show the storage engine for each table.
+    --no-show-engines          Do not show the storage engine for each table.
     --user=<username>          Username to use when connecting to server.
     --version                  Output version information and exit.
  
@@ -57,7 +60,7 @@ mysqldoc is a tool for auto-documentation generation for MySQL 5.0 and above
 
 if ($version) {
 
-  print "mysqldoc 0.0.2\n";
+  print "mysqldoc 0.0.4\n";
   exit(1);
 
 }
@@ -81,12 +84,13 @@ my $dbh = DBI->connect("dbi:mysql:;host=$host;port=$port", $user, $password);
 
 my %table_info = ();
 
-my $table_query = $dbh->prepare("SELECT `table_name`, SUM(`DATA_LENGTH` + `INDEX_LENGTH`) / 1024 / 1024 AS `total_size`, `DATA_LENGTH` / 1024 / 1024 AS `DATA_LENGTH`, `INDEX_LENGTH` / 1024 / 1024 AS `INDEX_LENGTH`, `TABLE_COMMENT` FROM `INFORMATION_SCHEMA`.`TABLES` WHERE `TABLE_SCHEMA` = \"$database\" GROUP BY `table_name`");
+my $table_query = $dbh->prepare("SELECT `table_name`, `engine`, SUM(`DATA_LENGTH` + `INDEX_LENGTH`) / 1024 / 1024 AS `total_size`, `DATA_LENGTH` / 1024 / 1024 AS `DATA_LENGTH`, `INDEX_LENGTH` / 1024 / 1024 AS `INDEX_LENGTH`, `TABLE_COMMENT` FROM `INFORMATION_SCHEMA`.`TABLES` WHERE `TABLE_SCHEMA` = \"$database\" GROUP BY `table_name`");
 $table_query->execute();
 
 while (my $ref = $table_query->fetchrow_hashref()) {
 
   $table_info{ $ref->{ 'table_name' } } = { 'TOTAL_SIZE'   =>  $ref->{ 'total_size' },
+                                            'ENGINE'       =>  $ref->{ 'engine' },
                                             'DATA_LENGTH'  =>  $ref->{ 'DATA_LENGTH' },
                                             'INDEX_LENGTH' =>  $ref->{ 'INDEX_LENGTH' },
                                             'COMMENT'      =>  $ref->{ 'TABLE_COMMENT' } };
@@ -154,10 +158,13 @@ sub format {
       $return_string .= "\n\n<head>\n  <title>DATA DICTIONARY FOR: $database</title>\n</head>\n\n<body>\n\n";
       $return_string .= "  <table><tr><td><em>DATA DICTIONARY FOR: $database</em></tr></td>";
 
-#do me here
       for my $table (keys(%table_info)) {
 
-        $return_string .= "<tr><td>$table - $table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)</td></tr>";
+        $return_string .= "<tr><td>$table - ";
+
+        $return_string .= "($table_info{$table}{'engine'}) " if ($engines eq 1);
+
+        $return_string .= "$table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)</td></tr>";
         $return_string .= "<tr><td>&nbsp;&nbsp;$table_info{$table}{'COMMENT'}</td></tr>";
         
         for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
@@ -185,7 +192,11 @@ sub format {
       # PlainText Output 
       for my $table (keys(%table_info)) {
 
-        $return_string .= "$table - $table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)\n";
+        $return_string .= "$table - ";
+
+        $return_string .= "($table_info{$table}{'engine'}) " if ($engines eq 1);
+
+        $return_string .= "$table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)\n";
         $return_string .= "  $table_info{$table}{'COMMENT'}\n";
        
         for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
