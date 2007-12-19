@@ -1,6 +1,38 @@
 #!/usr/bin/perl 
 # mysqldoc - Auto-Generate a data-dictionary
 
+=pod
+
+=head1 NAME
+
+mysqldoc - Auto-documentation for mysql schema
+
+=head1 SYNOPSIS
+
+mysqldoc [options]
+
+  Options:
+    --database=<database>      Database to use.
+    --file=<filename>          The path and filename in which to save the output.
+    --help                     Display this help and exit.
+    --host=<hostname>          Connect to host.
+    --html-links               Include HTML hyperlinks (only in HTML output) to
+                               relevant MySQL documentation.
+    --no-html-links            Do not include links to MySQL documentation.
+    --password[=<password>]    Password to use when connecting to server. If password is
+                               not given, it is asked from the tty.
+    --port=#                   Port number to use for connection.
+    --show-engines             Show the storage engine for each table.
+    --no-show-engines          Do not show the storage engine for each table.
+    --user=<username>          Username to use when connecting to server.
+    --version                  Output version information and exit.
+
+=head1 DESCRIPTION
+
+mysqldoc is a tool for auto-documentation generation for MySQL 5.0 and above
+
+=cut
+
 use strict;
 use warnings;
 use Pod::Usage;
@@ -35,36 +67,6 @@ my $result = GetOptions ( 'database=s'    => \$database,
 
 pod2usage(2) if $help;
 
-=head1 NAME
-
-mysqldoc - Auto-documentation for mysql schema
-
-=head1 SYNOPSIS
-
-mysqldoc [options]
-
-  Options:
-    --database=<database>      Database to use.
-    --file=<filename>          The path and filename in which to save the output.
-    --help                     Display this help and exit.
-    --host=<hostname>          Connect to host.
-    --html-links               Include HTML hyperlinks (only in HTML output) to 
-                               relevant MySQL documentation.
-    --no-html-links            Do not include links to MySQL documentation.
-    --password[=<password>]    Password to use when connecting to server. If password is
-                               not given, it is asked from the tty.
-    --port=#                   Port number to use for connection.
-    --show-engines             Show the storage engine for each table.
-    --no-show-engines          Do not show the storage engine for each table.
-    --user=<username>          Username to use when connecting to server.
-    --version                  Output version information and exit.
- 
-=head1 DESCRIPTION
-
-mysqldoc is a tool for auto-documentation generation for MySQL 5.0 and above
-
-=cut
-
 if ($version) {
 
   print "mysqldoc 0.0.4\n";
@@ -77,7 +79,7 @@ $user = $user ? $user : 'root';
 
 if ($password ne -1) {
 
-  $password = $password ? $password : getPass();
+  $password = $password ? $password : &getPass();
 
 } else {
 
@@ -89,7 +91,10 @@ $port = $port ? $port : '3306';
 
 my $dbh = DBI->connect("dbi:mysql:;host=$host;port=$port", $user, $password);
 
-$dbh->("SELECT SUBSTRING(\@\@version, 1, 3) mysql_version")->into(my $mysql_version);
+#$dbh->query("SELECT SUBSTRING(\@\@version, 1, 3) mysql_version")->into(my $mysql_version);
+my $mvq = $dbh->prepare("SELECT SUBSTRING(\@\@version, 1, 3) mysql_version");
+$mvq->execute();
+my $mysql_version = $mvq->fetchrow();
 
 my %table_info = ();
 
@@ -115,25 +120,120 @@ for my $table_name (keys(%table_info)) {
 
   while (my $ref = $column_query->fetchrow_hashref()) {
 
-    $table_info{$table_name}{'COLUMNS'}{ $ref->{ 'column_name' } } = { 'DATA_TYPE' => $ref->{ 'DATA_TYPE' },
-                                                                       'DEFAULT'   => $ref->{ 'COLUMN_DEFAULT' }, 
-                                                                       'COMMENT' => $ref->{ 'COLUMN_COMMENT' } };
+    $table_info{$table_name}{'COLUMNS'}{ $ref->{ 'column_name' } } = { 'DATA_TYPE' =>  $ref->{ 'DATA_TYPE' },
+                                                                       'DEFAULT'   =>  $ref->{ 'COLUMN_DEFAULT' }, 
+                                                                       'COMMENT'   =>  $ref->{ 'COLUMN_COMMENT' } };
 
   }
   
 }
 
-my $of = &format(%table_info, 'PlainText');
+my $return_string = '';
+
+switch ($output) {
+
+  case 'XML' {
+
+  } case 'HTML' {
+
+    $return_string .= '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">' . "\n\n";
+    $return_string .= '<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">';
+    $return_string .= "\n\n<head>\n  <title>DATA DICTIONARY FOR: $database</title>\n</head>\n\n<body>\n\n";
+    $return_string .= "<table border='1'>\n  <tr><td align='center' colspan='3'><strong>DATA DICTIONARY FOR: $database</strong></td></tr>\n";
+
+    for my $table (keys(%table_info)) {
+
+      $return_string .= "  <tr><td><strong>$table</strong> ";
+
+      $return_string .= "- ($table_info{$table}{'TABLE_TYPE'}";
+
+      if ($engines eq 1) {
+
+        $return_string .= " ";
+
+        if ($links eq 1) {
+
+          switch ($table_info{$table}{'ENGINE'}) {
+
+            case 'InnoDB' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/innodb.html'>"; }
+            case 'MyISAM' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/myisam-storage-engine.html'>"; }
+            case 'MEMORY' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/memory-storage-engine.html'>"; } 
+            case 'MERGE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/merge-storage-engine.html'>"; }
+            case 'BDB' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/bdb-storage-engine.html'>"; }
+            case 'EXAMPLE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/example-storage-engine.html'>"; }
+            case 'FEDERATED' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/federated-storage-engine.html'>"; }
+            case 'ARCHIVE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/archive-storage-engine.html'>"; }
+            case 'CSV' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/csv-storage-engine.html'>"; }
+            case 'BLACKHOLE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/blackhole-storage-engine.html'>"; }
+          
+          }
+     
+        }
+
+        $return_string .= "$table_info{$table}{'ENGINE'} ";
+
+        $return_string .= "</a>" if ($links eq 1);
+
+      }
+
+      $return_string .= ") ";
+
+      $return_string .= "</td><td colspan='2'>$table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)</td></tr>\n";
+
+      $return_string .= "  <tr><td></td><td colspan='2'>$table_info{$table}{'COMMENT'}</td></tr>\n" if ($table_info{$table}{'COMMENT'});
+ 
+      for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
+
+        $return_string .= "  <tr><td></td><td colspan='2'><em>$column</em> - $table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}";
+
+        $return_string .= "  DEFAULT $table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}" if ($table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'});
+
+        $return_string .= "</td></tr>\n  <tr><td></td><td colspan='2'>&nbsp;&nbsp;&nbsp;&nbsp;$table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}</td></tr>\n" if ($table_info{$table}{'COLUMNS'}{$column}{'COMMENT'});
+
+      }
+
+    }
+
+    $return_string .= "\n</table>\n\n</body>\n\n</html>";
+
+  } else {
+
+    $return_string .= "\nDATA DICTIONARY FOR: $database\n\n";
+
+    for my $table (keys(%table_info)) {
+
+      $return_string .= "$table - ($table_info{$table}{'TABLE_TYPE'}";
+
+      $return_string .= " $table_info{$table}{'ENGINE'}" if ($engines eq 1);
+
+      $return_string .= ") $table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)\n";
+      $return_string .= "  $table_info{$table}{'COMMENT'}\n";
+       
+      for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
+
+        $return_string .= "  $column - $table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}";
+
+        $return_string .= "  DEFAULT $table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}" if ($table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'});
+
+        $return_string .= "\n      $table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}\n";
+
+      }
+
+    }
+
+  }
+
+}
 
 if ($filename) {
 
   open(OUTFILE, ">$filename") or die "Can't open $filename for writing : $!";;
-  print OUTFILE $of;
+  print OUTFILE $return_string;
   close(OUTFILE);
 
 } else {
 
-  print $of;
+  print $return_string;
 
 }
 
@@ -148,110 +248,3 @@ sub getPass {
 
 }
 
-sub format {
-
-  # Valid formats are: XML, HTML, PlainText (default is PlainText)
-
-  #my %input_hash = $_[0];
-  #my $format = $_[1];
-  
-  my $return_string = '';
-
-  switch ($output) {
-
-    case 'XML' {
-
-    } case 'HTML' {
-
-      $return_string .= '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">' . "\n\n";
-      $return_string .= '<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">';
-      $return_string .= "\n\n<head>\n  <title>DATA DICTIONARY FOR: $database</title>\n</head>\n\n<body>\n\n";
-      $return_string .= "<table border='1'>\n  <tr><td align='center' colspan='3'><strong>DATA DICTIONARY FOR: $database</strong></td></tr>\n";
-
-      for my $table (keys(%table_info)) {
-
-        $return_string .= "  <tr><td><strong>$table</strong> ";
-
-        $return_string .= "- ($table_info{$table}{'TABLE_TYPE'}";
-
-        if ($engines eq 1) {
-
-          $return_string .= " ";
-
-          if ($links eq 1) {
-
-            switch ($table_info{$table}{'ENGINE'}) {
-
-              case 'InnoDB' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/innodb.html'>"; }
-              case 'MyISAM' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/myisam-storage-engine.html'>"; }
-              case 'MEMORY' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/memory-storage-engine.html'>"; } 
-              case 'MERGE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/merge-storage-engine.html'>"; }
-              case 'BDB' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/bdb-storage-engine.html'>"; }
-              case 'EXAMPLE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/example-storage-engine.html'>"; }
-              case 'FEDERATED' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/federated-storage-engine.html'>"; }
-              case 'ARCHIVE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/archive-storage-engine.html'>"; }
-              case 'CSV' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/csv-storage-engine.html'>"; }
-              case 'BLACKHOLE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/blackhole-storage-engine.html'>"; }
-          
-            }
-     
-          }
-
-          $return_string .= "$table_info{$table}{'ENGINE'} ";
-
-          $return_string .= "</a>" if ($links eq 1);
-
-        }
-
-        $return_string .= ") ";
-
-        $return_string .= "</td><td colspan='2'>$table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)</td></tr>\n";
-
-        $return_string .= "  <tr><td></td><td colspan='2'>$table_info{$table}{'COMMENT'}</td></tr>\n" if ($table_info{$table}{'COMMENT'});
- 
-        for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
-
-          $return_string .= "  <tr><td></td><td colspan='2'><em>$column</em> - $table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}";
-
-          $return_string .= "  DEFAULT $table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}" if ($table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'});
-
-          $return_string .= "</td></tr>\n  <tr><td></td><td colspan='2'>&nbsp;&nbsp;&nbsp;&nbsp;$table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}</td></tr>\n" if ($table_info{$table}{'COLUMNS'}{$column}{'COMMENT'});
-
-        }
-
-      }
-
-      $return_string .= "\n</table>\n\n</body>\n\n</html>";
-
-    } else {
-
-      $return_string .= "\nDATA DICTIONARY FOR: $database\n\n";
-
-      # PlainText Output 
-      for my $table (keys(%table_info)) {
-
-        $return_string .= "$table - ($table_info{$table}{'TABLE_TYPE'}";
-
-        $return_string .= " $table_info{$table}{'ENGINE'}" if ($engines eq 1);
-
-        $return_string .= ") $table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)\n";
-        $return_string .= "  $table_info{$table}{'COMMENT'}\n";
-       
-        for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
-
-          $return_string .= "  $column - $table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}";
-
-          $return_string .= "  DEFAULT $table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}" if ($table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'});
-  
-          $return_string .= "\n      $table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}\n";
-
-        }
-
-      }
-
-    }
-
-  }
-
-  return $return_string; 
-}
