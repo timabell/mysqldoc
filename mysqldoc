@@ -19,11 +19,13 @@ my $version;
 my $filename = 0;
 my $engines = 1;
 my $output = 0;
+my $links = 1;
 
 my $result = GetOptions ( 'database=s'    => \$database,
                           'file=s'        => \$filename,
                           'help'          => \$help,
                           'host:s'        => \$host,
+                          'html-links!'   => \$links,
                           'output=s'      => \$output,
                           'password:s'    => \$password,
                           'port:i'        => \$port,
@@ -46,6 +48,9 @@ mysqldoc [options]
     --file=<filename>          The path and filename in which to save the output.
     --help                     Display this help and exit.
     --host=<hostname>          Connect to host.
+    --html-links               Include HTML hyperlinks (only in HTML output) to 
+                               relevant MySQL documentation.
+    --no-html-links            Do not include links to MySQL documentation.
     --password[=<password>]    Password to use when connecting to server. If password is
                                not given, it is asked from the tty.
     --port=#                   Port number to use for connection.
@@ -84,14 +89,17 @@ $port = $port ? $port : '3306';
 
 my $dbh = DBI->connect("dbi:mysql:;host=$host;port=$port", $user, $password);
 
+$dbh->("SELECT SUBSTRING(\@\@version, 1, 3) mysql_version")->into(my $mysql_version);
+
 my %table_info = ();
 
-my $table_query = $dbh->prepare("SELECT `table_name`, `engine`, SUM(`DATA_LENGTH` + `INDEX_LENGTH`) / 1024 / 1024 AS `total_size`, `DATA_LENGTH` / 1024 / 1024 AS `DATA_LENGTH`, `INDEX_LENGTH` / 1024 / 1024 AS `INDEX_LENGTH`, `TABLE_COMMENT` FROM `INFORMATION_SCHEMA`.`TABLES` WHERE `TABLE_SCHEMA` = \"$database\" GROUP BY `table_name`");
+my $table_query = $dbh->prepare("SELECT `table_name`, `TABLE_TYPE`, `engine`, SUM(`DATA_LENGTH` + `INDEX_LENGTH`) / 1024 / 1024 AS `total_size`, `DATA_LENGTH` / 1024 / 1024 AS `DATA_LENGTH`, `INDEX_LENGTH` / 1024 / 1024 AS `INDEX_LENGTH`, `TABLE_COMMENT` FROM `INFORMATION_SCHEMA`.`TABLES` WHERE `TABLE_SCHEMA` = \"$database\" GROUP BY `table_name`");
 $table_query->execute();
 
 while (my $ref = $table_query->fetchrow_hashref()) {
 
   $table_info{ $ref->{ 'table_name' } } = { 'TOTAL_SIZE'   =>  $ref->{ 'total_size' },
+                                            'TABLE_TYPE'   =>  $ref->{ 'TABLE_TYPE' },
                                             'ENGINE'       =>  $ref->{ 'engine' },
                                             'DATA_LENGTH'  =>  $ref->{ 'DATA_LENGTH' },
                                             'INDEX_LENGTH' =>  $ref->{ 'INDEX_LENGTH' },
@@ -164,7 +172,38 @@ sub format {
 
         $return_string .= "  <tr><td><strong>$table</strong> ";
 
-        $return_string .= "- ($table_info{$table}{'ENGINE'}) " if ($engines eq 1);
+        $return_string .= "- ($table_info{$table}{'TABLE_TYPE'}";
+
+        if ($engines eq 1) {
+
+          $return_string .= " ";
+
+          if ($links eq 1) {
+
+            switch ($table_info{$table}{'ENGINE'}) {
+
+              case 'InnoDB' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/innodb.html'>"; }
+              case 'MyISAM' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/myisam-storage-engine.html'>"; }
+              case 'MEMORY' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/memory-storage-engine.html'>"; } 
+              case 'MERGE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/merge-storage-engine.html'>"; }
+              case 'BDB' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/bdb-storage-engine.html'>"; }
+              case 'EXAMPLE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/example-storage-engine.html'>"; }
+              case 'FEDERATED' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/federated-storage-engine.html'>"; }
+              case 'ARCHIVE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/archive-storage-engine.html'>"; }
+              case 'CSV' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/csv-storage-engine.html'>"; }
+              case 'BLACKHOLE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/blackhole-storage-engine.html'>"; }
+          
+            }
+     
+          }
+
+          $return_string .= "$table_info{$table}{'ENGINE'} ";
+
+          $return_string .= "</a>" if ($links eq 1);
+
+        }
+
+        $return_string .= ") ";
 
         $return_string .= "</td><td colspan='2'>$table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)</td></tr>\n";
 
@@ -191,11 +230,11 @@ sub format {
       # PlainText Output 
       for my $table (keys(%table_info)) {
 
-        $return_string .= "$table - ";
+        $return_string .= "$table - ($table_info{$table}{'TABLE_TYPE'}";
 
-        $return_string .= "($table_info{$table}{'ENGINE'}) " if ($engines eq 1);
+        $return_string .= " $table_info{$table}{'ENGINE'}" if ($engines eq 1);
 
-        $return_string .= "$table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)\n";
+        $return_string .= ") $table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)\n";
         $return_string .= "  $table_info{$table}{'COMMENT'}\n";
        
         for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
