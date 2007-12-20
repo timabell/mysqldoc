@@ -25,6 +25,8 @@ mysqldoc [options]
     --port=#                     Port number to use for connection.
     --show-engines               Show the storage engine for each table.
     --no-show-engines            Do not show the storage engine for each table.
+    --show-indexes               Show the indexes on each table.
+    --no-show-indexes            Do not show the indexes on each table.
     --user=<username>            Username to use when connecting to server.
     --version                    Output version information and exit.
 
@@ -53,12 +55,14 @@ my $filename = 0;
 my $engines = 1;
 my $output = 0;
 my $links = 1;
+my $indexes = 0;
 
 my $result = GetOptions ( 'database=s'    => \$database,
                           'file=s'        => \$filename,
                           'help'          => \$help,
                           'host:s'        => \$host,
                           'html-links!'   => \$links,
+                          'show-indexes!' => \$indexes,
                           'output=s'      => \$output,
                           'password:s'    => \$password,
                           'port:i'        => \$port,
@@ -92,7 +96,6 @@ $port = $port ? $port : '3306';
 
 my $dbh = DBI->connect("dbi:mysql:;host=$host;port=$port", $user, $password);
 
-#$dbh->query("SELECT SUBSTRING(\@\@version, 1, 3) mysql_version")->into(my $mysql_version);
 my $mvq = $dbh->prepare("SELECT SUBSTRING(\@\@version, 1, 3) mysql_version");
 $mvq->execute();
 my $mysql_version = $mvq->fetchrow();
@@ -115,7 +118,7 @@ while (my $ref = $table_query->fetchrow_hashref()) {
 
 for my $table_name (keys(%table_info)) {
 
-  my $column_query = $dbh->prepare("SELECT `column_name`, `DATA_TYPE`, `COLUMN_DEFAULT`, `COLUMN_COMMENT` FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\"");
+  my $column_query = $dbh->prepare("SELECT `column_name`, `DATA_TYPE`, IFNULL(`COLUMN_DEFAULT`,'NULL') AS `COLUMN_DEFAULT`, `COLUMN_COMMENT` FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\"");
 
   $column_query->execute();
 
@@ -129,35 +132,73 @@ for my $table_name (keys(%table_info)) {
   
 }
 
+for my $table_name (keys(%table_info)) {
+
+  my $index_query = $dbh->prepare("SELECT `INDEX_NAME`, `INDEX_TYPE`, `COLUMN_NAME` FROM `INFORMATION_SCHEMA`.`STATISTICS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\" GROUP BY `TABLE_NAME`, `INDEX_NAME`");
+
+  $index_query->execute();
+
+  while (my $ref = $index_query->fetchrow_hashref()) {
+
+    $table_info{$table_name}{'INDEXES'}{ $ref->{ 'INDEX_NAME' } } = { 'INDEX_TYPE' => $ref->{ 'INDEX_TYPE' } };
+
+    # FIX THIS 
+    $table_info{$table_name}{'INDEXES'}{ $ref->{ 'INDEX_NAME' } }{ 'COLUMNS' } = $ref->{ 'COLUMN_NAME' };
+
+  }
+
+}
+
 my $return_string = '';
 
 switch ($output) {
 
   case 'XML' {
 
-    $return_string .= '<?xml version="1.0" encoding="utf-8" ?>';
-    
+    $return_string .= "<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n";
+
+    $return_string .= "<!DOCTYPE database [
+  <!ELEMENT database (table*)>
+  <!ELEMENT table (column*)>
+  <!ELEMENT column (data_type, default_value, comment)>
+
+  <!ELEMENT data_type (#PCDATA)>
+  <!ELEMENT default_value (#PCDATA)>
+  <!ELEMENT comment (#PCDATA)>
+
+  <!ATTLIST database name CDATA #REQUIRED>
+  <!ATTLIST table name CDATA #REQUIRED
+                  type CDATA #REQUIRED
+                  engine CDATA #IMPLIED>
+  <!ATTLIST column name CDATA #REQUIRED>
+
+]>\n";
+   
+    $return_string .= "\n<database name='$database'>\n";
+ 
     for my $table (keys(%table_info)) {
 
-      $return_string .= "<table name='$table' type='$table_info{$table}{'TABLE_TYPE'}'";
+      $return_string .= "  <table name='$table' type='$table_info{$table}{'TABLE_TYPE'}'";
 
-      $return_string .= " engine='$table_info{$table}{'ENGINE'}";
+      $return_string .= " engine='$table_info{$table}{'ENGINE'}'";
 
       $return_string .= ">\n";
 
       for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
 
-        $return_string .= "  <column name='$column'>\n";
-        $return_string .= "    <data_type>'$table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}'</data_type>\n";
-        $return_string .= "    <default_value>$table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}</default_value>\n"; 
-        $return_string .= "    <comment>$table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}</comment>\n";
-        $return_string .= "  </column>\n";
+        $return_string .= "    <column name='$column'>\n";
+        $return_string .= "      <data_type>$table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}</data_type>\n";
+        $return_string .= "      <default_value>$table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}</default_value>\n"; 
+        $return_string .= "      <comment>$table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}</comment>\n";
+        $return_string .= "    </column>\n";
 
       }
 
-      $return_string .= "</table>";
+      $return_string .= "  </table>\n\n";
 
     }
+
+    $return_string .= "</database>";
 
   } case 'HTML' {
 
