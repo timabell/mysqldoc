@@ -12,20 +12,21 @@ mysqldoc - Auto-documentation for mysql schema
 mysqldoc [options]
 
   Options:
-    --database=<database>      Database to use.
-    --file=<filename>          The path and filename in which to save the output.
-    --help                     Display this help and exit.
-    --host=<hostname>          Connect to host.
-    --html-links               Include HTML hyperlinks (only in HTML output) to
-                               relevant MySQL documentation.
-    --no-html-links            Do not include links to MySQL documentation.
-    --password[=<password>]    Password to use when connecting to server. If password is
-                               not given, it is asked from the tty.
-    --port=#                   Port number to use for connection.
-    --show-engines             Show the storage engine for each table.
-    --no-show-engines          Do not show the storage engine for each table.
-    --user=<username>          Username to use when connecting to server.
-    --version                  Output version information and exit.
+    --database=<database>        Database to use.
+    --file=<filename>            The path and filename in which to save the output.
+    --help                       Display this help and exit.
+    --host=<hostname>            Connect to host.
+    --html-links                 Include HTML hyperlinks (only in HTML output) to
+                                 relevant MySQL documentation.
+    --no-html-links              Do not include links to MySQL documentation.
+    --output=[XML | HTML | TXT]  The format in which to generate the output.    
+    --password[=<password>]      Password to use when connecting to server. If password is
+                                 not given, it is asked from the tty.
+    --port=#                     Port number to use for connection.
+    --show-engines               Show the storage engine for each table.
+    --no-show-engines            Do not show the storage engine for each table.
+    --user=<username>            Username to use when connecting to server.
+    --version                    Output version information and exit.
 
 =head1 DESCRIPTION
 
@@ -69,7 +70,7 @@ pod2usage(2) if $help;
 
 if ($version) {
 
-  print "mysqldoc 0.0.4\n";
+  print "mysqldoc 0.0.5\n";
   exit(1);
 
 }
@@ -133,6 +134,30 @@ my $return_string = '';
 switch ($output) {
 
   case 'XML' {
+
+    $return_string .= '<?xml version="1.0" encoding="utf-8" ?>';
+    
+    for my $table (keys(%table_info)) {
+
+      $return_string .= "<table name='$table' type='$table_info{$table}{'TABLE_TYPE'}'";
+
+      $return_string .= " engine='$table_info{$table}{'ENGINE'}";
+
+      $return_string .= ">\n";
+
+      for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
+
+        $return_string .= "  <column name='$column'>\n";
+        $return_string .= "    <data_type>'$table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}'</data_type>\n";
+        $return_string .= "    <default_value>$table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}</default_value>\n"; 
+        $return_string .= "    <comment>$table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}</comment>\n";
+        $return_string .= "  </column>\n";
+
+      }
+
+      $return_string .= "</table>";
+
+    }
 
   } case 'HTML' {
 
