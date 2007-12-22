@@ -132,22 +132,38 @@ for my $table_name (keys(%table_info)) {
   
 }
 
-for my $table_name (keys(%table_info)) {
+if ($indexes eq 1) {
 
-  my $index_query = $dbh->prepare("SELECT `INDEX_NAME`, `INDEX_TYPE`, `COLUMN_NAME` FROM `INFORMATION_SCHEMA`.`STATISTICS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\" GROUP BY `TABLE_NAME`, `INDEX_NAME`");
+  for my $table_name (keys(%table_info)) {
 
-  $index_query->execute();
+    my $index_query = $dbh->prepare("SELECT `INDEX_NAME`, `COLUMN_NAME`, `SEQ_IN_INDEX` FROM `INFORMATION_SCHEMA`.`STATISTICS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\" GROUP BY `INDEX_NAME`, `COLUMN_NAME` ORDER BY `INDEX_NAME`, `SEQ_IN_INDEX`");
 
-  while (my $ref = $index_query->fetchrow_hashref()) {
+    $index_query->execute();
 
-    $table_info{$table_name}{'INDEXES'}{ $ref->{ 'INDEX_NAME' } } = { 'INDEX_TYPE' => $ref->{ 'INDEX_TYPE' } };
+    while (my $ref = $index_query->fetchrow_hashref()) {
 
-    # FIX THIS 
-    $table_info{$table_name}{'INDEXES'}{ $ref->{ 'INDEX_NAME' } }{ 'COLUMNS' } = $ref->{ 'COLUMN_NAME' };
+      $table_info{$table_name}{'INDEXES'}{ $ref->{ 'INDEX_NAME' } }{ 'COLUMNS' }{ $ref->{ 'COLUMN_NAME' } } = { 'SEQ_IN_INDEX' => $ref->{ 'SEQ_IN_INDEX' } };
 
-  }
+    }
 
-}
+    for my $index (keys(%{$table_info{$table_name}{'INDEXES'}})) {
+
+      my $itq = $dbh->prepare("SELECT DISTINCT `INDEX_TYPE` FROM `INFORMATION_SCHEMA`.`STATISTICS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\" AND `INDEX_NAME` = \"$index\"");
+
+      $itq->execute();
+
+      $table_info{$table_name}{'INDEXES'}{ $index }{ 'INDEX_TYPE' } =  $itq->fetchrow();
+ 
+    }
+ 
+  } 
+
+}   
+
+#use Data::Dumper;
+#print Dumper(%table_info);
+#exit;
+
 
 my $return_string = '';
 
@@ -180,7 +196,7 @@ switch ($output) {
 
       $return_string .= "  <table name='$table' type='$table_info{$table}{'TABLE_TYPE'}'";
 
-      $return_string .= " engine='$table_info{$table}{'ENGINE'}'";
+      $return_string .= " engine='$table_info{$table}{'ENGINE'}'" if ($engines eq 1);
 
       $return_string .= ">\n";
 
@@ -258,6 +274,47 @@ switch ($output) {
 
       }
 
+      if ($indexes eq 1) {
+
+        for my $index (keys(%{$table_info{$table}->{'INDEXES'}})) {
+
+          $return_string .= "  <tr><td></td><td colspan='2'><em>$index ($table_info{$table}{'INDEXES'}{$index}{'INDEX_TYPE'} INDEX)</td></tr>\n    <tr><td></td><td colspan='2'>&nbsp;&nbsp;&nbsp;&nbsp;";
+
+          my $column_count = keys %{$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}};
+
+          if ($column_count gt 1) {
+
+            for (my $i = 1; $i < $column_count + 1; $i++) {
+
+              for my $i_col (keys(%{$table_info{$table}{'INDEXES'}{$index}->{'COLUMNS'}})) {
+
+                if ($table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}{$i_col}->{'SEQ_IN_INDEX'} eq $i) {
+
+                  $return_string .= "$i_col";
+
+                  $return_string .= ($i < $column_count) ? ", " : "</td></tr>\n";
+
+                }
+
+              }
+
+            }
+
+          } else {
+
+            # This sucks, but I don't know another way
+            for my $s (keys(%{$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}})) {
+
+              $return_string .= "$s</td></tr>\n\n";
+
+            }
+
+          }
+
+        }
+
+      }
+
     }
 
     $return_string .= "\n</table>\n\n</body>\n\n</html>";
@@ -285,6 +342,47 @@ switch ($output) {
 
       }
 
+      if ($indexes eq 1) {
+
+        for my $index (keys(%{$table_info{$table}->{'INDEXES'}})) {
+
+          $return_string .= "  $index ($table_info{$table}{'INDEXES'}{$index}{'INDEX_TYPE'} INDEX)\n      ";
+
+          my $column_count = keys %{$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}};
+
+          if ($column_count gt 1) {
+ 
+            for (my $i = 1; $i < $column_count + 1; $i++) {
+
+              for my $i_col (keys(%{$table_info{$table}{'INDEXES'}{$index}->{'COLUMNS'}})) {
+
+                if ($table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}{$i_col}->{'SEQ_IN_INDEX'} eq $i) {
+
+                  $return_string .= "$i_col";
+
+                  $return_string .= ($i < $column_count) ? ", " : "\n";
+
+                }
+
+              }
+
+            }
+
+          } else {
+
+            # This sucks, but I don't know another way
+            for my $s (keys(%{$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}})) {
+
+              $return_string .= "$s\n";
+
+            }
+
+          }
+ 
+        }
+
+      }
+
     }
 
   }
@@ -293,7 +391,7 @@ switch ($output) {
 
 if ($filename) {
 
-  open(OUTFILE, ">$filename") or die "Can't open $filename for writing : $!";;
+  open(OUTFILE, ">$filename") or die "Can't open $filename for writing : $!";
   print OUTFILE $return_string;
   close(OUTFILE);
 
