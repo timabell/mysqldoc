@@ -27,6 +27,9 @@ mysqldoc [options]
     --no-show-engines            Do not show the storage engine for each table.
     --show-indexes               Show the indexes on each table.
     --no-show-indexes            Do not show the indexes on each table.
+    --timestamp                  Show the database timestamp for when the documentation
+                                 was generated.
+    --no-timestamp               Do not show the timestamp of doc generation.
     --user=<username>            Username to use when connecting to server.
     --version                    Output version information and exit.
 
@@ -56,6 +59,8 @@ my $engines = 1;
 my $output = 0;
 my $links = 1;
 my $indexes = 0;
+my $timestamp = 0;
+my $ts;
 
 my $result = GetOptions ( 'database=s'    => \$database,
                           'file=s'        => \$filename,
@@ -67,6 +72,7 @@ my $result = GetOptions ( 'database=s'    => \$database,
                           'password:s'    => \$password,
                           'port:i'        => \$port,
                           'show-engines!' => \$engines,
+                          'timestamp!'    => \$timestamp,
                           'user:s'        => \$user,
                           'version'       => \$version );
 
@@ -74,7 +80,7 @@ pod2usage(2) if $help;
 
 if ($version) {
 
-  print "mysqldoc 0.0.5\n";
+  print "mysqldoc 0.0.6\n";
   exit(1);
 
 }
@@ -99,6 +105,14 @@ my $dbh = DBI->connect("dbi:mysql:;host=$host;port=$port", $user, $password);
 my $mvq = $dbh->prepare("SELECT SUBSTRING(\@\@version, 1, 3) mysql_version");
 $mvq->execute();
 my $mysql_version = $mvq->fetchrow();
+
+if ($timestamp eq 1) {
+
+  my $tsq = $dbh->prepare("SELECT NOW()");
+  $tsq->execute();
+  $ts = $tsq->fetchrow();
+
+}
 
 my %table_info = ();
 
@@ -167,7 +181,7 @@ if ($indexes eq 1) {
 
 my $return_string = '';
 
-switch ($output) {
+switch (uc($output)) {
 
   case 'XML' {
 
@@ -185,7 +199,8 @@ switch ($output) {
   <!ELEMENT index_type (#PCDATA)>
   <!ELEMENT indexed_column (#PCDATA)>
 
-  <!ATTLIST database name CDATA #REQUIRED>
+  <!ATTLIST database name CDATA #REQUIRED
+                     timestamp CDATA #IMPLIED>
   <!ATTLIST table name CDATA #REQUIRED
                   type CDATA #REQUIRED
                   engine CDATA #IMPLIED>
@@ -195,7 +210,11 @@ switch ($output) {
 
 ]>\n";
    
-    $return_string .= "\n<database name='$database'>\n";
+    $return_string .= "\n<database name='$database'";
+
+    $return_string .= " timestamp='$ts'" if ($timestamp eq 1);
+
+    $return_string .= ">\n";
  
     for my $table (keys(%table_info)) {
 
@@ -266,8 +285,12 @@ switch ($output) {
 
     $return_string .= '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">' . "\n\n";
     $return_string .= '<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">';
-    $return_string .= "\n\n<head>\n  <title>DATA DICTIONARY FOR: $database</title>\n</head>\n\n<body>\n\n";
-    $return_string .= "<table border='1'>\n  <tr><td align='center' colspan='3'><strong>DATA DICTIONARY FOR: $database</strong></td></tr>\n";
+    $return_string .= "\n\n<head>\n  <title>DATA DICTIONARY FOR: $database";
+    $return_string .= " ($ts)" if ($timestamp eq 1);
+    $return_string .= "</title>\n</head>\n\n<body>\n\n";
+    $return_string .= "<table border='1'>\n  <tr><td align='center' colspan='3'><strong>DATA DICTIONARY FOR: $database";
+    $return_string .= " ($ts)" if ($timestamp eq 1);
+    $return_string .= "</strong></td></tr>\n";
 
     for my $table (keys(%table_info)) {
 
@@ -369,7 +392,9 @@ switch ($output) {
 
   } else {
 
-    $return_string .= "\nDATA DICTIONARY FOR: $database\n\n";
+    $return_string .= "\nDATA DICTIONARY FOR: $database";
+    $return_string .= " ($ts)" if ($timestamp eq 1);
+    $return_string .= "\n\n";
 
     for my $table (keys(%table_info)) {
 
