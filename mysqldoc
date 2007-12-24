@@ -175,18 +175,23 @@ switch ($output) {
 
     $return_string .= "<!DOCTYPE database [
   <!ELEMENT database (table*)>
-  <!ELEMENT table (column*)>
+  <!ELEMENT table (column*, index*)>
   <!ELEMENT column (data_type, default_value, comment)>
+  <!ELEMENT index (index_type, indexed_column*)>
 
   <!ELEMENT data_type (#PCDATA)>
   <!ELEMENT default_value (#PCDATA)>
   <!ELEMENT comment (#PCDATA)>
+  <!ELEMENT index_type (#PCDATA)>
+  <!ELEMENT indexed_column (#PCDATA)>
 
   <!ATTLIST database name CDATA #REQUIRED>
   <!ATTLIST table name CDATA #REQUIRED
                   type CDATA #REQUIRED
                   engine CDATA #IMPLIED>
   <!ATTLIST column name CDATA #REQUIRED>
+  <!ATTLIST index name CDATA #REQUIRED>
+  <!ATTLIST indexed_column seq_in_index CDATA #REQUIRED>
 
 ]>\n";
    
@@ -207,6 +212,47 @@ switch ($output) {
         $return_string .= "      <default_value>$table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}</default_value>\n"; 
         $return_string .= "      <comment>$table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}</comment>\n";
         $return_string .= "    </column>\n";
+
+      }
+
+      if ($indexes eq 1) {
+
+        for my $index (keys(%{$table_info{$table}->{'INDEXES'}})) {
+
+          $return_string .= "    <index name='$index'>\n";
+          $return_string .= "      <index_type>$table_info{$table}{'INDEXES'}{$index}{'INDEX_TYPE'}</index_type>\n";
+
+          my $column_count = keys %{$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}};
+
+          if ($column_count gt 1) {
+
+            for (my $i = 1; $i < $column_count + 1; $i++) {
+
+              for my $i_col (keys(%{$table_info{$table}{'INDEXES'}{$index}->{'COLUMNS'}})) {
+
+                if ($table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}{$i_col}->{'SEQ_IN_INDEX'} eq $i) {
+
+                   $return_string .= "      <indexed_column seq_in_index='$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}{$i_col}->{'SEQ_IN_INDEX'}'>$i_col</indexed_column>\n";
+
+                }
+
+              }
+
+            }
+
+          } else {
+
+            # This sucks, but I don't know another way
+            for my $s (keys(%{$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}})) {
+
+              $return_string .= "      <indexed_column seq_in_index='1'>$s</indexed_column>\n";
+
+            }
+
+          }
+
+        $return_string .= "    </index>\n";
+        }
 
       }
 
@@ -270,7 +316,9 @@ switch ($output) {
 
         $return_string .= "  DEFAULT $table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}" if ($table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'});
 
-        $return_string .= "</td></tr>\n  <tr><td></td><td colspan='2'>&nbsp;&nbsp;&nbsp;&nbsp;$table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}</td></tr>\n" if ($table_info{$table}{'COLUMNS'}{$column}{'COMMENT'});
+        $return_string .= "</td></tr>\n";
+
+        $return_string .= "  <tr><td></td><td colspan='2'>&nbsp;&nbsp;&nbsp;&nbsp;$table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}</td></tr>\n" if ($table_info{$table}{'COLUMNS'}{$column}{'COMMENT'});
 
       }
 
@@ -278,7 +326,7 @@ switch ($output) {
 
         for my $index (keys(%{$table_info{$table}->{'INDEXES'}})) {
 
-          $return_string .= "  <tr><td></td><td colspan='2'><em>$index ($table_info{$table}{'INDEXES'}{$index}{'INDEX_TYPE'} INDEX)</td></tr>\n    <tr><td></td><td colspan='2'>&nbsp;&nbsp;&nbsp;&nbsp;";
+          $return_string .= "  <tr><td></td><td colspan='2'><em>$index</em> ($table_info{$table}{'INDEXES'}{$index}{'INDEX_TYPE'} INDEX)</td></tr>\n    <tr><td></td><td colspan='2'>&nbsp;&nbsp;&nbsp;&nbsp;";
 
           my $column_count = keys %{$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}};
 
