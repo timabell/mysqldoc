@@ -132,15 +132,16 @@ while (my $ref = $table_query->fetchrow_hashref()) {
 
 for my $table_name (keys(%table_info)) {
 
-  my $column_query = $dbh->prepare("SELECT `column_name`, `DATA_TYPE`, IFNULL(`COLUMN_DEFAULT`,'NULL') AS `COLUMN_DEFAULT`, `COLUMN_COMMENT` FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\"");
+  my $column_query = $dbh->prepare("SELECT `column_name`, `DATA_TYPE`, IFNULL(`CHARACTER_MAXIMUM_LENGTH`, `NUMERIC_PRECISION`) AS `MAX_LENGTH`, IFNULL(`COLUMN_DEFAULT`,'NULL') AS `COLUMN_DEFAULT`, `COLUMN_COMMENT` FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\"");
 
   $column_query->execute();
 
   while (my $ref = $column_query->fetchrow_hashref()) {
 
-    $table_info{$table_name}{'COLUMNS'}{ $ref->{ 'column_name' } } = { 'DATA_TYPE' =>  $ref->{ 'DATA_TYPE' },
-                                                                       'DEFAULT'   =>  $ref->{ 'COLUMN_DEFAULT' }, 
-                                                                       'COMMENT'   =>  $ref->{ 'COLUMN_COMMENT' } };
+    $table_info{$table_name}{'COLUMNS'}{ $ref->{ 'column_name' } } = { 'DATA_TYPE'  => $ref->{ 'DATA_TYPE' },
+                                                                       'MAX_LENGTH' => $ref->{ 'MAX_LENGTH' }, 
+                                                                       'DEFAULT'    => $ref->{ 'COLUMN_DEFAULT' }, 
+                                                                       'COMMENT'    => $ref->{ 'COLUMN_COMMENT' } };
 
   }
   
@@ -227,7 +228,11 @@ switch (uc($output)) {
       for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
 
         $return_string .= "    <column name='$column'>\n";
-        $return_string .= "      <data_type>$table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}</data_type>\n";
+        $return_string .= "      <data_type>";
+
+        $return_string .= formatType($table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}, $table_info{$table}{'COLUMNS'}{$column}{'MAX_LENGTH'});
+
+        $return_string .= "</data_type>\n";
         $return_string .= "      <default_value>$table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}</default_value>\n"; 
         $return_string .= "      <comment>$table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}</comment>\n";
         $return_string .= "    </column>\n";
@@ -335,8 +340,8 @@ switch (uc($output)) {
  
       for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
 
-        $return_string .= "  <tr><td></td><td colspan='2'><em>$column</em> - $table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}";
-
+        $return_string .= "  <tr><td></td><td colspan='2'><em>$column</em> - "; 
+        $return_string .= formatType($table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}, $table_info{$table}{'COLUMNS'}{$column}{'MAX_LENGTH'});
         $return_string .= "  DEFAULT $table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}" if ($table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'});
 
         $return_string .= "</td></tr>\n";
@@ -407,7 +412,8 @@ switch (uc($output)) {
        
       for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
 
-        $return_string .= "  $column - $table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}";
+        $return_string .= "  $column - ";
+        $return_string .= formatType($table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}, $table_info{$table}{'COLUMNS'}{$column}{'MAX_LENGTH'});
 
         $return_string .= "  DEFAULT $table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}" if ($table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'});
 
@@ -482,6 +488,26 @@ sub getPass {
   system "stty echo";
   print "\n";
   return $passwd;
+
+}
+
+sub formatType {
+
+  my $dt = $_[0];
+  my $mv = $_[1];
+
+  if (uc($dt) eq 'CHAR' || uc($dt) eq 'VARCHAR' || 
+      uc($dt) eq 'TINYINT' || uc($dt) eq 'SMALLINT' || 
+      uc($dt) eq 'MEDIUMINT' || uc($dt) eq 'INT' || 
+      uc($dt) eq 'BIGINT') {
+
+    return "$dt($mv)";
+
+  } else {
+
+    return $dt;
+
+  }
 
 }
 
