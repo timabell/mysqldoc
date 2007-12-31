@@ -1,4 +1,18 @@
-0.0.5 - 21 December 2007
+0.0.6 - 30 December 2007
+
+  - Added the --timestamp command line option
+  - Added the --no-timestamp command line option
+  - The --output option now recognizes upper and lower case arguments
+  - Added maximum length [char(64) vs. char] to the standard output
+  - Added download URL to the --version command line option
+  - Added the --print-defaults command line option
+  - Added the --show-triggers command line option
+  - Added the --no-show-triggers command line option
+  - Added the --show-trigger-body command line option
+  - Added the --no-show-trigger-body command line option
+  - Added some additional error handling
+
+0.0.5 - 23 December 2007
 
   - Added XML support
   - Added the --show-indexes command line option
