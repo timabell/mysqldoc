@@ -23,10 +23,15 @@ mysqldoc [options]
     --password[=<password>]      Password to use when connecting to server. If password is
                                  not given, it is asked from the tty.
     --port=#                     Port number to use for connection.
+    --print-defaults             Print the program argument list and exit.
     --show-engines               Show the storage engine for each table.
     --no-show-engines            Do not show the storage engine for each table.
     --show-indexes               Show the indexes on each table.
     --no-show-indexes            Do not show the indexes on each table.
+    --show-triggers              Show TRIGGERS associated with each table.
+    --no-show-triggers           Do not show TRIGGERS associated with each table.
+    --show-trigger-body          Show TRIGGER bodies (implies --show-triggers).
+    --no-show-trigger-body       Do not show TRIGGER bodies.
     --timestamp                  Show the database timestamp for when the documentation
                                  was generated.
     --no-timestamp               Do not show the timestamp of doc generation.
@@ -39,6 +44,8 @@ mysqldoc is a tool for auto-documentation generation for MySQL 5.0 and above
 
 =cut
 
+pod2usage(2) if ($#ARGV eq -1);
+
 use strict;
 use warnings;
 use Pod::Usage;
@@ -50,7 +57,7 @@ use Switch;
 my $help = 0;
 my $host;
 my $user;
-my $port;
+my $port = 3306;
 my $database;
 my $password = -1;
 my $version;
@@ -61,28 +68,61 @@ my $links = 1;
 my $indexes = 0;
 my $timestamp = 0;
 my $ts;
+my $defaults;
+my $triggers = 0;
+my $trigger_bodies = 0;
 
-my $result = GetOptions ( 'database=s'    => \$database,
-                          'file=s'        => \$filename,
-                          'help'          => \$help,
-                          'host:s'        => \$host,
-                          'html-links!'   => \$links,
-                          'show-indexes!' => \$indexes,
-                          'output=s'      => \$output,
-                          'password:s'    => \$password,
-                          'port:i'        => \$port,
-                          'show-engines!' => \$engines,
-                          'timestamp!'    => \$timestamp,
-                          'user:s'        => \$user,
-                          'version'       => \$version );
+my $result = GetOptions ( 'database=s'         => \$database,
+                          'file=s'             => \$filename,
+                          'help'               => \$help,
+                          'host:s'             => \$host,
+                          'html-links!'        => \$links,
+                          'show-indexes!'      => \$indexes,
+                          'output=s'           => \$output,
+                          'password:s'         => \$password,
+                          'port:i'             => \$port,
+                          'print-defaults'     => \$defaults,
+                          'show-engines!'      => \$engines,
+                          'show-triggers!'     => \$triggers,
+                          'show-trigger-body!' => \$trigger_bodies,
+                          'timestamp!'         => \$timestamp,
+                          'user:s'             => \$user,
+                          'version'            => \$version );
 
 pod2usage(2) if $help;
 
 if ($version) {
 
-  print "mysqldoc 0.0.6\n";
+  print "mysqldoc 0.0.6 (Check for updates at: http://code.google.com/p/mysqldoc)\n";
   exit(1);
 
+}
+
+if ($defaults) {
+
+  print "mysqldoc defaults are:
+
+ATTRIBUTE                  VALUE
+-------------------------- ------------------
+database                   (No default value)
+file                       (No default value)
+help                       FALSE
+host                       (No default volue)
+html-links                 TRUE
+show-indexes               FALSE
+output                     txt
+password                   (No default value)
+port                       3306
+print-defaults             FALSE
+show-engines               TRUE
+show-triggers              FALSE
+show-trigger-body          FALSE
+timestamp                  FALSE
+user                       (No default value)
+version                    FALSE
+";
+
+  exit(1);
 }
 
 $host = $host ? $host : 'localhost';
@@ -102,22 +142,22 @@ $port = $port ? $port : '3306';
 
 my $dbh = DBI->connect("dbi:mysql:;host=$host;port=$port", $user, $password);
 
-my $mvq = $dbh->prepare("SELECT SUBSTRING(\@\@version, 1, 3) mysql_version");
-$mvq->execute();
+my $mvq = $dbh->prepare("SELECT SUBSTRING(\@\@version, 1, 3) mysql_version") or die "Couldn't prepare statement: " . $dbh->errstr;
+$mvq->execute() or die "Couldn't execute statement: " . $dbh->errstr;
 my $mysql_version = $mvq->fetchrow();
 
 if ($timestamp eq 1) {
 
-  my $tsq = $dbh->prepare("SELECT NOW()");
-  $tsq->execute();
+  my $tsq = $dbh->prepare("SELECT NOW()") or die "Couldn't prepare statement: " . $dbh->errstr;
+  $tsq->execute() or die "Couldn't execute statement: " . $dbh->errstr;
   $ts = $tsq->fetchrow();
 
 }
 
 my %table_info = ();
 
-my $table_query = $dbh->prepare("SELECT `table_name`, `TABLE_TYPE`, `engine`, SUM(`DATA_LENGTH` + `INDEX_LENGTH`) / 1024 / 1024 AS `total_size`, `DATA_LENGTH` / 1024 / 1024 AS `DATA_LENGTH`, `INDEX_LENGTH` / 1024 / 1024 AS `INDEX_LENGTH`, `TABLE_COMMENT` FROM `INFORMATION_SCHEMA`.`TABLES` WHERE `TABLE_SCHEMA` = \"$database\" GROUP BY `table_name`");
-$table_query->execute();
+my $table_query = $dbh->prepare("SELECT `table_name`, `TABLE_TYPE`, `engine`, SUM(`DATA_LENGTH` + `INDEX_LENGTH`) / 1024 / 1024 AS `total_size`, `DATA_LENGTH` / 1024 / 1024 AS `DATA_LENGTH`, `INDEX_LENGTH` / 1024 / 1024 AS `INDEX_LENGTH`, `TABLE_COMMENT` FROM `INFORMATION_SCHEMA`.`TABLES` WHERE `TABLE_SCHEMA` = \"$database\" GROUP BY `table_name`") or die "Couldn't prepare statement: " . $dbh->errstr;
+$table_query->execute() or die "Couldn't execute statement: " . $dbh->errstr;
 
 while (my $ref = $table_query->fetchrow_hashref()) {
 
@@ -132,9 +172,9 @@ while (my $ref = $table_query->fetchrow_hashref()) {
 
 for my $table_name (keys(%table_info)) {
 
-  my $column_query = $dbh->prepare("SELECT `column_name`, `DATA_TYPE`, IFNULL(`CHARACTER_MAXIMUM_LENGTH`, `NUMERIC_PRECISION`) AS `MAX_LENGTH`, IFNULL(`COLUMN_DEFAULT`,'NULL') AS `COLUMN_DEFAULT`, `COLUMN_COMMENT` FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\"");
+  my $column_query = $dbh->prepare("SELECT `column_name`, `DATA_TYPE`, IFNULL(`CHARACTER_MAXIMUM_LENGTH`, `NUMERIC_PRECISION`) AS `MAX_LENGTH`, IFNULL(`COLUMN_DEFAULT`,'NULL') AS `COLUMN_DEFAULT`, `COLUMN_COMMENT` FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\"") or die "Couldn't prepare statement: " . $dbh->errstr;
 
-  $column_query->execute();
+  $column_query->execute() or die "Couldn't execute statement: " . $dbh->errstr;
 
   while (my $ref = $column_query->fetchrow_hashref()) {
 
@@ -151,9 +191,9 @@ if ($indexes eq 1) {
 
   for my $table_name (keys(%table_info)) {
 
-    my $index_query = $dbh->prepare("SELECT `INDEX_NAME`, `COLUMN_NAME`, `SEQ_IN_INDEX` FROM `INFORMATION_SCHEMA`.`STATISTICS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\" GROUP BY `INDEX_NAME`, `COLUMN_NAME` ORDER BY `INDEX_NAME`, `SEQ_IN_INDEX`");
+    my $index_query = $dbh->prepare("SELECT `INDEX_NAME`, `COLUMN_NAME`, `SEQ_IN_INDEX` FROM `INFORMATION_SCHEMA`.`STATISTICS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\" GROUP BY `INDEX_NAME`, `COLUMN_NAME` ORDER BY `INDEX_NAME`, `SEQ_IN_INDEX`") or die "Couldn't prepare statement: " . $dbh->errstr;
 
-    $index_query->execute();
+    $index_query->execute() or die "Couldn't execute statement: " . $dbh->errstr;
 
     while (my $ref = $index_query->fetchrow_hashref()) {
 
@@ -163,9 +203,9 @@ if ($indexes eq 1) {
 
     for my $index (keys(%{$table_info{$table_name}{'INDEXES'}})) {
 
-      my $itq = $dbh->prepare("SELECT DISTINCT `INDEX_TYPE` FROM `INFORMATION_SCHEMA`.`STATISTICS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\" AND `INDEX_NAME` = \"$index\"");
+      my $itq = $dbh->prepare("SELECT DISTINCT `INDEX_TYPE` FROM `INFORMATION_SCHEMA`.`STATISTICS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\" AND `INDEX_NAME` = \"$index\"") or die "Couldn't prepare statement: " . $dbh->errstr;;
 
-      $itq->execute();
+      $itq->execute() or die "Couldn't execute statement: " . $dbh->errstr;
 
       $table_info{$table_name}{'INDEXES'}{ $index }{ 'INDEX_TYPE' } =  $itq->fetchrow();
  
@@ -175,10 +215,29 @@ if ($indexes eq 1) {
 
 }   
 
+if ($triggers eq 1 || $trigger_bodies eq 1) {
+
+  for my $table_name (keys(%table_info)) {
+
+    my $trigger_query = $dbh->prepare("SELECT `trigger_name`, `action_timing`, `event_manipulation`, `action_statement` FROM `INFORMATION_SCHEMA`.`TRIGGERS` WHERE `TRIGGER_SCHEMA` = \"$database\" AND `EVENT_OBJECT_TABLE` = \"$table_name\"") 
+                              or die "Couldn't prepare statement: " . $dbh->errstr;
+
+    $trigger_query->execute() or die "Couldn't execute statement: " . $dbh->errstr;
+
+    while (my $ref = $trigger_query->fetchrow_hashref()) {
+
+      $table_info{$table_name}{'TRIGGERS'}{ $ref->{ 'trigger_name' } } = { 'ACTION_TIMING'      => $ref->{ 'action_timing' },
+                                                                           'EVENT_MANIPULATION' => $ref->{ 'event_manipulation' },
+                                                                           'ACTION_STATEMENT'   => $ref->{ 'action_statement' } };
+    }
+
+  }
+
+}
+
 #use Data::Dumper;
 #print Dumper(%table_info);
 #exit;
-
 
 my $return_string = '';
 
@@ -190,24 +249,32 @@ switch (uc($output)) {
 
     $return_string .= "<!DOCTYPE database [
   <!ELEMENT database (table*)>
-  <!ELEMENT table (column*, index*)>
+  <!ELEMENT table (column*, index*, trigger*)>
   <!ELEMENT column (data_type, default_value, comment)>
   <!ELEMENT index (index_type, indexed_column*)>
+  <!ELEMENT trigger (action_timing, event_manipulation, action_statement?)>
 
   <!ELEMENT data_type (#PCDATA)>
   <!ELEMENT default_value (#PCDATA)>
   <!ELEMENT comment (#PCDATA)>
   <!ELEMENT index_type (#PCDATA)>
   <!ELEMENT indexed_column (#PCDATA)>
+  <!ELEMENT action_timing (#PCDATA)>
+  <!ELEMENT event_manipulation (#PCDATA)>
+  <!ELEMENT action_statement (#PCDATA)>
 
   <!ATTLIST database name CDATA #REQUIRED
                      timestamp CDATA #IMPLIED>
   <!ATTLIST table name CDATA #REQUIRED
                   type CDATA #REQUIRED
-                  engine CDATA #IMPLIED>
+                  engine CDATA #IMPLIED
+                  total_size CDATA #IMPLIED
+                  data_size CDATA #IMPLIED
+                  index_size CDATA #IMPLIED>
   <!ATTLIST column name CDATA #REQUIRED>
   <!ATTLIST index name CDATA #REQUIRED>
   <!ATTLIST indexed_column seq_in_index CDATA #REQUIRED>
+  <!ATTLIST trigger name CDATA #REQUIRED>
 
 ]>\n";
    
@@ -221,7 +288,14 @@ switch (uc($output)) {
 
       $return_string .= "  <table name='$table' type='$table_info{$table}{'TABLE_TYPE'}'";
 
-      $return_string .= " engine='$table_info{$table}{'ENGINE'}'" if ($engines eq 1);
+      if ($table_info{$table}{'TABLE_TYPE'} ne 'VIEW') {
+
+        $return_string .= " engine='$table_info{$table}{'ENGINE'}'" if ($engines eq 1);
+        $return_string .= " total_size='$table_info{$table}{'TOTAL_SIZE'} MB'";
+        $return_string .= " data_size='$table_info{$table}{'DATA_LENGTH'} MB'";
+        $return_string .= " index_size='$table_info{$table}{'INDEX_LENGTH'} MB'"; 
+
+      }
 
       $return_string .= ">\n";
 
@@ -280,6 +354,20 @@ switch (uc($output)) {
 
       }
 
+      if ($triggers eq 1 || $trigger_bodies eq 1) {
+
+        for my $trigger (keys(%{$table_info{$table}->{'TRIGGERS'}})) {
+
+          $return_string .= "    <trigger name='$trigger'>\n";
+          $return_string .= "      <action_timing>$table_info{$table}{'TRIGGERS'}{$trigger}{'ACTION_TIMING'}</action_timing>\n";
+          $return_string .= "      <event_manipulation>$table_info{$table}{'TRIGGERS'}{$trigger}{'EVENT_MANIPULATION'}</event_manipulation>\n";
+          $return_string .= "      <action_statement>$table_info{$table}{'TRIGGERS'}{$trigger}{'ACTION_STATEMENT'}</action_statement>\n" if ($trigger_bodies eq 1);
+          $return_string .= "    </trigger>\n";
+
+        }
+
+      }
+
       $return_string .= "  </table>\n\n";
 
     }
@@ -290,20 +378,27 @@ switch (uc($output)) {
 
     $return_string .= '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">' . "\n\n";
     $return_string .= '<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">';
-    $return_string .= "\n\n<head>\n  <title>DATA DICTIONARY FOR: $database";
+    $return_string .= "\n\n<head>\n  <meta http-equiv=\"Content-Type\" content=\"text/html; charset=ISO-8859-1\" />\n  <title>DATA DICTIONARY FOR: $database";
     $return_string .= " ($ts)" if ($timestamp eq 1);
-    $return_string .= "</title>\n</head>\n\n<body>\n\n";
-    $return_string .= "<table border='1'>\n  <tr><td align='center' colspan='3'><strong>DATA DICTIONARY FOR: $database";
+    $return_string .= "</title>\n  <style type=\"text/css\">
+    body {font-family:Arial;}
+    h1 {text-align:center;}
+    tr td {border-bottom:1px solid #ccc;border-right:1px dashed #ccc;padding:3px 8px;}
+    tr:hover {background-color:#FFFFCC;}
+    th {text-align:left;padding:3px 8px;}
+  </style>\n</head>\n\n<body>\n\n";
+
+    $return_string .= "  <h1><strong>DATA DICTIONARY FOR: $database";
     $return_string .= " ($ts)" if ($timestamp eq 1);
-    $return_string .= "</strong></td></tr>\n";
+    $return_string .= "</strong></h1>\n";
 
     for my $table (keys(%table_info)) {
 
-      $return_string .= "  <tr><td><strong>$table</strong> ";
+      $return_string .= ($table_info{$table}{'TABLE_TYPE'} ne 'VIEW') ? "  <dl>\n    <dt>Table Name</dt>\n      <dd>$table " : "  <dl>\n    <dt>View Name</dt>\n      <dd>$table ";
 
       $return_string .= "- ($table_info{$table}{'TABLE_TYPE'}";
 
-      if ($engines eq 1) {
+      if ($engines eq 1 && $table_info{$table}{'TABLE_TYPE'} ne 'VIEW') {
 
         $return_string .= " ";
 
@@ -326,35 +421,57 @@ switch (uc($output)) {
      
         }
 
-        $return_string .= "$table_info{$table}{'ENGINE'} ";
+        $return_string .= "$table_info{$table}{'ENGINE'}";
 
         $return_string .= "</a>" if ($links eq 1);
 
       }
 
-      $return_string .= ") ";
+      $return_string .= ")</dd>\n";
 
-      $return_string .= "</td><td colspan='2'>$table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)</td></tr>\n";
+      if ($table_info{$table}{'TABLE_TYPE'} ne 'VIEW') {
 
-      $return_string .= "  <tr><td></td><td colspan='2'>$table_info{$table}{'COMMENT'}</td></tr>\n" if ($table_info{$table}{'COMMENT'});
- 
-      for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
+        $return_string .= "    <dt>Table Stats</dt>\n      <dd>$table_info{$table}{'TOTAL_SIZE'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)</dd>\n";
 
-        $return_string .= "  <tr><td></td><td colspan='2'><em>$column</em> - "; 
-        $return_string .= formatType($table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}, $table_info{$table}{'COLUMNS'}{$column}{'MAX_LENGTH'});
-        $return_string .= "  DEFAULT $table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}" if ($table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'});
-
-        $return_string .= "</td></tr>\n";
-
-        $return_string .= "  <tr><td></td><td colspan='2'>&nbsp;&nbsp;&nbsp;&nbsp;$table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}</td></tr>\n" if ($table_info{$table}{'COLUMNS'}{$column}{'COMMENT'});
+        $return_string .= "    <dt>Table Contents</dt>\n      <dd>$table_info{$table}{'COMMENT'}</dd>\n" if ($table_info{$table}{'COMMENT'});
 
       }
 
+      $return_string .= "  </dl>\n  <table border=\"0\" cellpadding=\"0\" cellspacing=\"0\">
+    <tr>
+      <th>Column Name</th>
+      <th>Data Type</th>
+      <th>Default Value</th>
+      <th>Description</th>
+    </tr>\n";
+ 
+      for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
+
+        $return_string .= "    <tr>\n      <th>$column</th>\n      <th>"; 
+        $return_string .= formatType($table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}, $table_info{$table}{'COLUMNS'}{$column}{'MAX_LENGTH'});
+        $return_string .= "</th>\n      <th>$table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}" if ($table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'});
+
+        $return_string .= "</th>\n";
+
+        $return_string .= "      <th>$table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}</th>\n" if ($table_info{$table}{'COLUMNS'}{$column}{'COMMENT'});
+        $return_string .= "    </tr>\n";
+
+      }
+
+      $return_string .= "  </table>\n";
+
       if ($indexes eq 1) {
+
+        $return_string .= "  <table border=\"0\" cellpadding=\"0\" cellspacing=\"0\">
+    <tr>
+      <th>Index Name</th>
+      <th>Index Type</th>
+      <th>Affected Column(s)</th>
+    </tr>\n";
 
         for my $index (keys(%{$table_info{$table}->{'INDEXES'}})) {
 
-          $return_string .= "  <tr><td></td><td colspan='2'><em>$index</em> ($table_info{$table}{'INDEXES'}{$index}{'INDEX_TYPE'} INDEX)</td></tr>\n    <tr><td></td><td colspan='2'>&nbsp;&nbsp;&nbsp;&nbsp;";
+          $return_string .= "    <tr>\n     <th>$index</th>\n      <th>$table_info{$table}{'INDEXES'}{$index}{'INDEX_TYPE'}</th>\n      <th>";
 
           my $column_count = keys %{$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}};
 
@@ -368,7 +485,7 @@ switch (uc($output)) {
 
                   $return_string .= "$i_col";
 
-                  $return_string .= ($i < $column_count) ? ", " : "</td></tr>\n";
+                  $return_string .= ($i < $column_count) ? ", " : "</th>\n    </tr>\n";
 
                 }
 
@@ -381,7 +498,7 @@ switch (uc($output)) {
             # This sucks, but I don't know another way
             for my $s (keys(%{$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}})) {
 
-              $return_string .= "$s</td></tr>\n\n";
+              $return_string .= "$s</th>\n    </tr>\n\n";
 
             }
 
@@ -389,11 +506,43 @@ switch (uc($output)) {
 
         }
 
+        $return_string .= "  </table>\n";
+
+      }
+
+      if ($triggers eq 1 || $trigger_bodies eq 1) {
+
+        my $trigger_count = keys %{$table_info{$table}{'TRIGGERS'}};
+
+        if ($trigger_count gt 0) {
+
+          $return_string .= "  <table border=\"0\" cellpadding=\"0\" cellspacing=\"0\">
+    <tr>
+      <th>Trigger Name</th>
+      <th>Action Timing</th>
+      <th>Event Manipulation</th>\n";
+        $return_string .= "      <th>Body</th>\n" if ($trigger_bodies eq 1);
+        $return_string .= "    </tr>\n";
+
+          for my $trigger (keys(%{$table_info{$table}->{'TRIGGERS'}})) {
+
+            $return_string .= "    <tr>\n      <th>$trigger</th>\n";
+            $return_string .= "      <th>$table_info{$table}{'TRIGGERS'}{$trigger}{'ACTION_TIMING'}</th>\n";
+            $return_string .= "      <th>$table_info{$table}{'TRIGGERS'}{$trigger}{'EVENT_MANIPULATION'}</th>\n";
+            $return_string .= "      <th><pre>$table_info{$table}{'TRIGGERS'}{$trigger}{'ACTION_STATEMENT'}</pre></th>\n" if ($trigger_bodies eq 1);
+            $return_string .= "    </tr>\n";
+
+          }
+
+          $return_string .= "  </table>\n";
+
+        }
+
       }
 
     }
 
-    $return_string .= "\n</table>\n\n</body>\n\n</html>";
+    $return_string .= "\n\n</body>\n\n</html>";
 
   } else {
 
@@ -405,9 +554,9 @@ switch (uc($output)) {
 
       $return_string .= "$table - ($table_info{$table}{'TABLE_TYPE'}";
 
-      $return_string .= " $table_info{$table}{'ENGINE'}" if ($engines eq 1);
+      $return_string .= " $table_info{$table}{'ENGINE'}" if ($engines eq 1 && $table_info{$table}{'TABLE_TYPE'} ne 'VIEW');
 
-      $return_string .= ") $table_info{$table}{'DATA_LENGTH'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)\n";
+      $return_string .= ") $table_info{$table}{'total_size'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)\n";
       $return_string .= "  $table_info{$table}{'COMMENT'}\n";
        
       for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
@@ -458,6 +607,17 @@ switch (uc($output)) {
 
           }
  
+        }
+
+      }
+
+      if ($triggers eq 1 || $trigger_bodies eq 1) {
+
+        for my $trigger (keys(%{$table_info{$table}->{'TRIGGERS'}})) {
+
+          $return_string .= "  $trigger (TRIGGER) - $table_info{$table}{'TRIGGERS'}{$trigger}{'ACTION_TIMING'} $table_info{$table}{'TRIGGERS'}{$trigger}{'EVENT_MANIPULATION'}\n";
+          $return_string .= "      $table_info{$table}{'TRIGGERS'}{$trigger}{'ACTION_STATEMENT'}\n" if ($trigger_bodies eq 1);
+
         }
 
       }
