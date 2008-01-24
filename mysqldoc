@@ -12,7 +12,8 @@ mysqldoc - Auto-documentation for mysql schema
 mysqldoc [options]
 
   Options:
-    --database=<database>        Database to use.
+    --databases=<database>[,<database>[,...]]
+                                 Database(s) to use.  Comma-Separated, if more than one.
     --file=<filename>            The path and filename in which to save the output.
     --help                       Display this help and exit.
     --host=<hostname>            Connect to host.
@@ -32,6 +33,10 @@ mysqldoc [options]
     --no-show-triggers           Do not show TRIGGERS associated with each table.
     --show-trigger-body          Show TRIGGER bodies (implies --show-triggers).
     --no-show-trigger-body       Do not show TRIGGER bodies.
+    --show-udf                   Show User-Defined Functions.
+    --no-show-udf                Do not show User-Defined Functions.
+    --show-udf-body              Show UDF bodies (implies --show-udf).
+    --no-show-udf-body           Do not show UDF bodies.
     --timestamp                  Show the database timestamp for when the documentation
                                  was generated.
     --no-timestamp               Do not show the timestamp of doc generation.
@@ -53,17 +58,19 @@ use Getopt::Long;
 use DBI;
 use Switch;
 
+my $mysqldoc_version = '0.0.7';
+
 # Defaults
 my $help = 0;
 my $host;
 my $user;
 my $port = 3306;
-my $database;
+my @databases;
 my $password = -1;
 my $version;
 my $filename = 0;
 my $engines = 1;
-my $output = 0;
+my $output = 'TXT';
 my $links = 1;
 my $indexes = 0;
 my $timestamp = 0;
@@ -71,8 +78,10 @@ my $ts;
 my $defaults;
 my $triggers = 0;
 my $trigger_bodies = 0;
+my $udfs = 0;
+my $udf_bodies = 0;
 
-my $result = GetOptions ( 'database=s'         => \$database,
+my $result = GetOptions ( 'databases=s'        => \@databases,
                           'file=s'             => \$filename,
                           'help'               => \$help,
                           'host:s'             => \$host,
@@ -85,6 +94,8 @@ my $result = GetOptions ( 'database=s'         => \$database,
                           'show-engines!'      => \$engines,
                           'show-triggers!'     => \$triggers,
                           'show-trigger-body!' => \$trigger_bodies,
+                          'show-udf!'          => \$udfs,
+                          'show-udf-body!'     => \$udf_bodies,
                           'timestamp!'         => \$timestamp,
                           'user:s'             => \$user,
                           'version'            => \$version );
@@ -93,7 +104,7 @@ pod2usage(2) if $help;
 
 if ($version) {
 
-  print "mysqldoc 0.0.6 (Check for updates at: http://code.google.com/p/mysqldoc)\n";
+  print "mysqldoc $mysqldoc_version (Check for updates at: http://code.google.com/p/mysqldoc)\n";
   exit(1);
 
 }
@@ -104,7 +115,7 @@ if ($defaults) {
 
 ATTRIBUTE                  VALUE
 -------------------------- ------------------
-database                   (No default value)
+databases                  (No default value)
 file                       (No default value)
 help                       FALSE
 host                       (No default volue)
@@ -117,6 +128,8 @@ print-defaults             FALSE
 show-engines               TRUE
 show-triggers              FALSE
 show-trigger-body          FALSE
+show-udf                   FALSE
+show-udf-body              FOLSE
 timestamp                  FALSE
 user                       (No default value)
 version                    FALSE
@@ -124,6 +137,8 @@ version                    FALSE
 
   exit(1);
 }
+
+@databases = split(/,/, join(',', @databases));
 
 $host = $host ? $host : 'localhost';
 $user = $user ? $user : 'root';
@@ -142,112 +157,513 @@ $port = $port ? $port : '3306';
 
 my $dbh = DBI->connect("dbi:mysql:;host=$host;port=$port", $user, $password);
 
-my $mvq = $dbh->prepare("SELECT SUBSTRING(\@\@version, 1, 3) mysql_version") or die "Couldn't prepare statement: " . $dbh->errstr;
+my $mvq = $dbh->prepare("SELECT SUBSTRING(\@\@version, 1, 3) mysql_version") 
+                        or die "Couldn't prepare statement: " . $dbh->errstr;
 $mvq->execute() or die "Couldn't execute statement: " . $dbh->errstr;
 my $mysql_version = $mvq->fetchrow();
 
 if ($timestamp eq 1) {
 
-  my $tsq = $dbh->prepare("SELECT NOW()") or die "Couldn't prepare statement: " . $dbh->errstr;
+  my $tsq = $dbh->prepare("SELECT NOW()") 
+                          or die "Couldn't prepare statement: " . $dbh->errstr;
   $tsq->execute() or die "Couldn't execute statement: " . $dbh->errstr;
   $ts = $tsq->fetchrow();
 
 }
 
-my %table_info = ();
+my %doc_info = ();
 
-my $table_query = $dbh->prepare("SELECT `table_name`, `TABLE_TYPE`, `engine`, SUM(`DATA_LENGTH` + `INDEX_LENGTH`) / 1024 / 1024 AS `total_size`, `DATA_LENGTH` / 1024 / 1024 AS `DATA_LENGTH`, `INDEX_LENGTH` / 1024 / 1024 AS `INDEX_LENGTH`, `TABLE_COMMENT` FROM `INFORMATION_SCHEMA`.`TABLES` WHERE `TABLE_SCHEMA` = \"$database\" GROUP BY `table_name`") or die "Couldn't prepare statement: " . $dbh->errstr;
-$table_query->execute() or die "Couldn't execute statement: " . $dbh->errstr;
+foreach my $database (@databases) {
 
-while (my $ref = $table_query->fetchrow_hashref()) {
+  &getBaseInfo($database);
 
-  $table_info{ $ref->{ 'table_name' } } = { 'TOTAL_SIZE'   =>  $ref->{ 'total_size' },
-                                            'TABLE_TYPE'   =>  $ref->{ 'TABLE_TYPE' },
-                                            'ENGINE'       =>  $ref->{ 'engine' },
-                                            'DATA_LENGTH'  =>  $ref->{ 'DATA_LENGTH' },
-                                            'INDEX_LENGTH' =>  $ref->{ 'INDEX_LENGTH' },
-                                            'COMMENT'      =>  $ref->{ 'TABLE_COMMENT' } };
+  if ($indexes eq 1) {
 
-}
+    for my $table_name (keys(%{$doc_info{ $database }{ 'TABLES' } })) {
 
-for my $table_name (keys(%table_info)) {
-
-  my $column_query = $dbh->prepare("SELECT `column_name`, `DATA_TYPE`, IFNULL(`CHARACTER_MAXIMUM_LENGTH`, `NUMERIC_PRECISION`) AS `MAX_LENGTH`, IFNULL(`COLUMN_DEFAULT`,'NULL') AS `COLUMN_DEFAULT`, `COLUMN_COMMENT` FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\"") or die "Couldn't prepare statement: " . $dbh->errstr;
-
-  $column_query->execute() or die "Couldn't execute statement: " . $dbh->errstr;
-
-  while (my $ref = $column_query->fetchrow_hashref()) {
-
-    $table_info{$table_name}{'COLUMNS'}{ $ref->{ 'column_name' } } = { 'DATA_TYPE'  => $ref->{ 'DATA_TYPE' },
-                                                                       'MAX_LENGTH' => $ref->{ 'MAX_LENGTH' }, 
-                                                                       'DEFAULT'    => $ref->{ 'COLUMN_DEFAULT' }, 
-                                                                       'COMMENT'    => $ref->{ 'COLUMN_COMMENT' } };
-
-  }
-  
-}
-
-if ($indexes eq 1) {
-
-  for my $table_name (keys(%table_info)) {
-
-    my $index_query = $dbh->prepare("SELECT `INDEX_NAME`, `COLUMN_NAME`, `SEQ_IN_INDEX` FROM `INFORMATION_SCHEMA`.`STATISTICS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\" GROUP BY `INDEX_NAME`, `COLUMN_NAME` ORDER BY `INDEX_NAME`, `SEQ_IN_INDEX`") or die "Couldn't prepare statement: " . $dbh->errstr;
-
-    $index_query->execute() or die "Couldn't execute statement: " . $dbh->errstr;
-
-    while (my $ref = $index_query->fetchrow_hashref()) {
-
-      $table_info{$table_name}{'INDEXES'}{ $ref->{ 'INDEX_NAME' } }{ 'COLUMNS' }{ $ref->{ 'COLUMN_NAME' } } = { 'SEQ_IN_INDEX' => $ref->{ 'SEQ_IN_INDEX' } };
-
-    }
-
-    for my $index (keys(%{$table_info{$table_name}{'INDEXES'}})) {
-
-      my $itq = $dbh->prepare("SELECT DISTINCT `INDEX_TYPE` FROM `INFORMATION_SCHEMA`.`STATISTICS` WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\" AND `INDEX_NAME` = \"$index\"") or die "Couldn't prepare statement: " . $dbh->errstr;;
-
-      $itq->execute() or die "Couldn't execute statement: " . $dbh->errstr;
-
-      $table_info{$table_name}{'INDEXES'}{ $index }{ 'INDEX_TYPE' } =  $itq->fetchrow();
+      &getIndexInfo($database, $table_name);
  
-    }
- 
-  } 
+    } 
 
-}   
+  }   
 
-if ($triggers eq 1 || $trigger_bodies eq 1) {
+  if ($triggers eq 1 || $trigger_bodies eq 1) {
 
-  for my $table_name (keys(%table_info)) {
+    for my $table_name (keys(%{$doc_info{ $database }{ 'TABLES' } })) {
 
-    my $trigger_query = $dbh->prepare("SELECT `trigger_name`, `action_timing`, `event_manipulation`, `action_statement` FROM `INFORMATION_SCHEMA`.`TRIGGERS` WHERE `TRIGGER_SCHEMA` = \"$database\" AND `EVENT_OBJECT_TABLE` = \"$table_name\"") 
-                              or die "Couldn't prepare statement: " . $dbh->errstr;
+      &getTriggerInfo($database, $table_name);
 
-    $trigger_query->execute() or die "Couldn't execute statement: " . $dbh->errstr;
-
-    while (my $ref = $trigger_query->fetchrow_hashref()) {
-
-      $table_info{$table_name}{'TRIGGERS'}{ $ref->{ 'trigger_name' } } = { 'ACTION_TIMING'      => $ref->{ 'action_timing' },
-                                                                           'EVENT_MANIPULATION' => $ref->{ 'event_manipulation' },
-                                                                           'ACTION_STATEMENT'   => $ref->{ 'action_statement' } };
     }
 
   }
 
+  &getUdfInfo($database) if ($udfs eq 1 || $udf_bodies eq 1);
+
 }
 
+# FOR DEBUG
 #use Data::Dumper;
-#print Dumper(%table_info);
+#print Dumper(%doc_info);
 #exit;
 
-my $return_string = '';
+my $return_string = &buildOutputHeaders(uc($output));
 
-switch (uc($output)) {
+for my $database (keys %doc_info) {
 
-  case 'XML' {
+  switch (uc($output)) {
 
-    $return_string .= "<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n";
+    case 'XML' {
 
-    $return_string .= "<!DOCTYPE database [
+      $return_string .= "\n<database name='$database'";
+
+      $return_string .= " timestamp='$ts'" if ($timestamp eq 1);
+
+      $return_string .= ">\n";
+ 
+      for my $table (keys(%{$doc_info{ $database }{ 'TABLES' } })) {
+
+        $return_string .= "  <table name='$table' type='$doc_info{ $database }{ 'TABLES' }{ $table }{ 'TABLE_TYPE' }'"; 
+
+        if ($doc_info{ $database }{ 'TABLES' }{ $table }{ 'TABLE_TYPE' } ne 'VIEW') {
+
+          $return_string .= " engine='$doc_info{ $database }{ 'TABLES' }{ $table }{ 'ENGINE' }'" if ($engines eq 1);
+          $return_string .= " total_size='$doc_info{ $database }{ 'TABLES' }{ $table }{ 'TOTAL_SIZE' } MB'";
+          $return_string .= " data_size='$doc_info{ $database }{ 'TABLES' }{ $table }{ 'DATA_LENGTH' } MB'";
+          $return_string .= " index_size='$doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEX_LENGTH' } MB'"; 
+
+        }
+
+        $return_string .= ">\n";
+
+        for my $column (keys(%{$doc_info{ $database }{ 'TABLES' }{ $table }{ 'COLUMNS' } })) {
+
+          $return_string .= "    <column name='$column'>\n";
+          $return_string .= "      <data_type>";
+
+          $return_string .= $doc_info{ $database }{ 'TABLES' }{ $table }{ 'COLUMNS' }{ $column }{ 'DATA_TYPE' };
+
+          $return_string .= "</data_type>\n";
+          $return_string .= "      <default_value>$doc_info{ $database }{ 'TABLES' }{ $table }{ 'COLUMNS' }{ $column }{ 'DEFAULT' }</default_value>\n"; 
+          $return_string .= "      <comment>$doc_info{ $database }{ 'TABLES' }{ $table }{ 'COLUMNS' }{ $column }{ 'COMMENT' }</comment>\n";
+          $return_string .= "    </column>\n";
+
+        }
+
+        if ($indexes eq 1) {
+
+          for my $index (keys(%{$doc_info{ $database }{ 'TABLES' }{ $table }->{ 'INDEXES' } })) {
+
+           $return_string .= "    <index name='$index'>\n";
+           $return_string .= "      <index_type>$doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEXES' }{ $index }{ 'INDEX_TYPE' }</index_type>\n";
+
+           my $column_count = keys %{$doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEXES' }{ $index }{ 'COLUMNS' } };
+
+           if ($column_count gt 1) {
+
+             for (my $i = 1; $i < $column_count + 1; $i++) {
+
+               for my $i_col (keys(%{$doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEXES' }{ $index }->{ 'COLUMNS' } })) {
+
+                 if ($doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEXES' }{ $index }{ 'COLUMNS' }{ $i_col }->{ 'SEQ_IN_INDEX' } eq $i) {
+
+                   $return_string .= "      <indexed_column seq_in_index='$doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEXES' }{ $index }{ 'COLUMNS' }{ $i_col }->{ 'SEQ_IN_INDEX' }'>$i_col</indexed_column>\n";
+
+                 }
+
+               }
+ 
+             }
+
+           } else {
+
+             # This sucks, but I don't know another way
+             for my $s (keys(%{$doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEXES' }{ $index }{ 'COLUMNS' } })) {
+
+               $return_string .= "      <indexed_column seq_in_index='1'>$s</indexed_column>\n";
+
+             }
+
+           }
+
+          $return_string .= "    </index>\n";
+
+        }
+
+      }
+
+      if ($triggers eq 1 || $trigger_bodies eq 1) {
+
+        for my $trigger (keys(%{$doc_info{ $database }{ 'TABLES' }{ $table }->{ 'TRIGGERS' } })) {
+
+          $return_string .= "    <trigger name='$trigger'>\n";
+          $return_string .= "      <action_timing>$doc_info{ $database }{ 'TABLES' }{ $table }{ 'TRIGGERS' }{ $trigger }{ 'ACTION_TIMING' }</action_timing>\n";
+          $return_string .= "      <event_manipulation>$doc_info{ $database }{ 'TABLES' }{ $table }{ 'TRIGGERS' }{ $trigger }{ 'EVENT_MANIPULATION' }</event_manipulation>\n";
+          $return_string .= "      <action_statement>$doc_info{ $database }{ 'TABLES' }{ $table }{ 'TRIGGERS' }{ $trigger }{ 'ACTION_STATEMENT' }</action_statement>\n" if ($trigger_bodies eq 1);
+          $return_string .= "    </trigger>\n";
+
+        }
+
+      }
+
+      $return_string .= "  </table>\n\n";
+
+    }
+
+    if ( $udfs eq 1 || $udf_bodies eq 1 ) {
+
+      for my $udf (keys(%{$doc_info{ $database }{ 'PROCEDURES' } })) {
+
+        $return_string .= "  <procedure name='$udf' type='$doc_info{ $database }{ 'PROCEDURES' }{ $udf }{ 'ROUTINE_TYPE' }'>\n";
+
+        $return_string .= "      <td><pre>$doc_info{ $database }{ 'PROCEDURES' }{ $udf }{ 'ROUTINE_DEFINITION' }</pre></td>\n" if ( $udf_bodies eq 1 );
+
+        $return_string .= "\n  </procedure>\n";
+
+      }
+
+    }
+
+    $return_string .= "</database>\n";
+
+  } case 'HTML' {
+
+
+    $return_string .= "  <h1><strong>DATA DICTIONARY FOR: $database";
+    $return_string .= " ($ts)" if ($timestamp eq 1);
+    $return_string .= "</strong></h1>\n";
+
+    for my $table (keys(%{$doc_info{ $database }{ 'TABLES' } })) {
+
+      $return_string .= ($doc_info{ $database }{ 'TABLES' }{ $table }{ 'TABLE_TYPE' } ne 'VIEW' ? "  <dl>\n    <dt>Table Name</dt>\n      <dd>$table " : "  <dl>\n    <dt>View Name</dt>\n      <dd>$table ");
+
+      $return_string .= "- ($doc_info{ $database }{ 'TABLES' }{ $table }{ 'TABLE_TYPE' }";
+
+      if ($engines eq 1 && $doc_info{ $database }{ 'TABLES' }{ $table }{ 'TABLE_TYPE' } ne 'VIEW') {
+
+        $return_string .= " ";
+
+        if ($links eq 1) {
+
+          switch ($doc_info{ $database }{ 'TABLES' }{ $table }{ 'ENGINE' }) {
+
+            case 'InnoDB' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/innodb.html'>"; }
+            case 'MyISAM' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/myisam-storage-engine.html'>"; }
+            case 'MEMORY' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/memory-storage-engine.html'>"; } 
+            case 'MERGE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/merge-storage-engine.html'>"; }
+            case 'BDB' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/bdb-storage-engine.html'>"; }
+            case 'EXAMPLE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/example-storage-engine.html'>"; }
+            case 'FEDERATED' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/federated-storage-engine.html'>"; }
+            case 'ARCHIVE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/archive-storage-engine.html'>"; }
+            case 'CSV' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/csv-storage-engine.html'>"; }
+            case 'BLACKHOLE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/blackhole-storage-engine.html'>"; }
+          
+          }
+     
+        }
+
+        $return_string .= "$doc_info{ $database }{ 'TABLES' }{ $table }{ 'ENGINE' }";
+
+        $return_string .= "</a>" if ($links eq 1);
+
+      }
+
+      $return_string .= ")</dd>\n";
+
+      if ($doc_info{ $database }{ 'TABLES' }{ $table }{ 'TABLE_TYPE' } ne 'VIEW') {
+
+        $return_string .= "    <dt>Table Stats</dt>\n      <dd>$doc_info{ $database }{ 'TABLES' }{ $table }{ 'TOTAL_SIZE' } MB (DATA: $doc_info{ $database }{ 'TABLES' }{ $table }{ 'DATA_LENGTH' } MB, INDEX: $doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEX_LENGTH' } MB)</dd>\n";
+
+        $return_string .= "    <dt>Table Contents</dt>\n      <dd>$doc_info{ $database }{ 'TABLES' }{ $table }{ 'COMMENT' }</dd>\n" if ($doc_info{ $database }{ 'TABLES' }{ $table }{ 'COMMENT' });
+
+      }
+
+      $return_string .= "  </dl>\n  <table border=\"0\" cellpadding=\"0\" cellspacing=\"0\">
+    <tr>
+      <th>Column Name</th>
+      <th>Data Type</th>
+      <th>Default Value</th>
+      <th>Description</th>
+    </tr>\n";
+ 
+      for my $column (keys(%{$doc_info{ $database }{ 'TABLES' }{ $table }->{ 'COLUMNS' } })) {
+
+        $return_string .= "    <tr>\n      <td>$column</td>\n      <td>"; 
+        $return_string .= $doc_info{ $database }{ 'TABLES' }{ $table }{ 'COLUMNS' }{ $column }{ 'DATA_TYPE' };
+        $return_string .= "</td>\n      <td>$doc_info{ $database }{ 'TABLES' }{ $table }{ 'COLUMNS' }{ $column }{ 'DEFAULT' }" if ($doc_info{ $database }{ 'TABLES' }{ $table }{ 'COLUMNS' }{ $column }{ 'DEFAULT' });
+
+        $return_string .= "</td>\n";
+
+        $return_string .= "      <td>$doc_info{ $database }{ 'TABLES' }{ $table }{ 'COLUMNS' }{ $column }{ 'COMMENT' }</td>\n" if ($doc_info{ $database }{ 'TABLES' }{ $table }{ 'COLUMNS' }{ $column }{ 'COMMENT' });
+        $return_string .= "    </tr>\n";
+
+      }
+
+      $return_string .= "  </table>\n";
+
+      if ($indexes eq 1) {
+
+        $return_string .= "  <table border=\"0\" cellpadding=\"0\" cellspacing=\"0\">
+    <tr>
+      <th>Index Name</th>
+      <th>Index Type</th>
+      <th>Affected Column(s)</th>
+    </tr>\n";
+
+        for my $index (keys(%{$doc_info{ $database }{ 'TABLES' }{ $table }->{ 'INDEXES' } })) {
+
+          $return_string .= "    <tr>\n     <td>$index</td>\n      <td>$doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEXES' }{ $index }{ 'INDEX_TYPE' }</td>\n      <td>";
+
+          my $column_count = keys %{$doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEXES' }{ $index }{ 'COLUMNS' } };
+
+          if ($column_count gt 1) {
+
+            for (my $i = 1; $i < $column_count + 1; $i++) {
+
+              for my $i_col (keys(%{$doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEXES' }{ $index }->{ 'COLUMNS' } })) {
+
+                if ($doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEXES' }{ $index }{ 'COLUMNS' }{ $i_col }->{ 'SEQ_IN_INDEX' } eq $i) {
+
+                  $return_string .= "$i_col";
+
+                  $return_string .= ($i < $column_count) ? ", " : "</td>\n    </tr>\n";
+
+                }
+
+              }
+
+            }
+
+          } else {
+
+            # This sucks, but I don't know another way
+            for my $s (keys(%{$doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEXES' }{ $index }{ 'COLUMNS' } })) {
+
+              $return_string .= "$s</td>\n    </tr>\n\n";
+
+            }
+
+          }
+
+        }
+
+        $return_string .= "  </table>\n";
+
+      }
+
+      if ($triggers eq 1 || $trigger_bodies eq 1) {
+
+        my $trigger_count = keys %{$doc_info{ $database }{ 'TABLES' }{ $table }{ 'TRIGGERS' } };
+
+        if ($trigger_count gt 0) {
+
+          $return_string .= "  <table border=\"0\" cellpadding=\"0\" cellspacing=\"0\">
+    <tr>
+      <th>Trigger Name</th>
+      <th>Action Timing</th>
+      <th>Event Manipulation</th>\n";
+        $return_string .= "      <th>Body</th>\n" if ($trigger_bodies eq 1);
+        $return_string .= "    </tr>\n";
+
+          for my $trigger (keys(%{$doc_info{ $database }{ 'TABLES' }{ $table }->{ 'TRIGGERS' } })) {
+
+            $return_string .= "    <tr>\n      <td>$trigger</td>\n";
+            $return_string .= "      <td>$doc_info{ $database }{ 'TABLES' }{ $table }{ 'TRIGGERS' }{ $trigger }{ 'ACTION_TIMING' }</td>\n";
+            $return_string .= "      <td>$doc_info{ $database }{ 'TABLES' }{ $table }{ 'TRIGGERS' }{ $trigger }{ 'EVENT_MANIPULATION' }</td>\n";
+            $return_string .= "      <td><pre>$doc_info{ $database }{ 'TABLES' }{ $table }{ 'TRIGGERS' }{ $trigger }{ 'ACTION_STATEMENT' }</pre></td>\n" if ($trigger_bodies eq 1);
+            $return_string .= "    </tr>\n";
+
+          }
+
+          $return_string .= "  </table>\n";
+
+        }
+
+        if ( $udfs eq 1 || $udf_bodies eq 1 ) {
+
+          $return_string .= "  <table border=\"0\" cellpadding=\"0\" cellspacing=\"0\">
+    <tr>
+      <th>UDF Name</th>
+      <th>UDF Type</th>\n";
+          $return_string .= "      <th>Event Manipulation</th>\n" if ($udf_bodies eq 1);;
+
+          for my $udf (keys(%{$doc_info{ $database }{ 'PROCEDURES' } })) {
+
+            $return_string .= "    <tr>\n      <td>$udf</td>\n       <td>$doc_info{ $database }{ 'PROCEDURES' }{ $udf }{ 'ROUTINE_TYPE' }</td>\n";
+            $return_string .= "      <td><pre>$doc_info{ $database }{ 'PROCEDURES' }{ $udf }{ 'ROUTINE_DEFINITION' }</pre></td>\n" if ( $udf_bodies eq 1 );
+
+          }
+
+          $return_string .= "  </table>\n";
+
+        }
+
+      } 
+
+      }
+
+    } else {
+
+      $return_string .= "\nDATA DICTIONARY FOR: $database";
+      $return_string .= " ($ts)" if ($timestamp eq 1);
+      $return_string .= "\n\n";
+
+      for my $table (keys(%{$doc_info{ $database }{ 'TABLES' } })) {
+
+        $return_string .= "$table - ($doc_info{ $database }{ 'TABLES' }{ $table }{ 'TABLE_TYPE' }";
+
+        if ($doc_info{ $database }{ 'TABLES' }{ $table }{ 'TABLE_TYPE' } ne 'VIEW') {
+
+          $return_string .= " $doc_info{ $database }{ 'TABLES' }{ $table }{ 'ENGINE' }" if ($engines eq 1);
+
+          $return_string .= ") $doc_info{ $database }{ 'TABLES' }{ $table }{ 'TOTAL_SIZE' } MB (DATA: $doc_info{ $database }{ 'TABLES' }{ $table }{ 'DATA_LENGTH' } MB, INDEX: $doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEX_LENGTH' } MB)\n";
+        }
+
+        $return_string .= "  $doc_info{ $database }{ 'TABLES' }{ $table }{ 'COMMENT' }\n";
+       
+        for my $column (keys(%{$doc_info{ $database }{ 'TABLES' }{ $table }->{ 'COLUMNS' } })) {
+
+          $return_string .= "  $column - ";
+          $return_string .= $doc_info{ $database }{ 'TABLES' }{ $table }{ 'COLUMNS' }{ $column }{ 'DATA_TYPE' };
+
+          $return_string .= "  DEFAULT $doc_info{ $database }{ 'TABLES' }{ $table }{ 'COLUMNS' }{ $column }{ 'DEFAULT' }" if ($doc_info{ $database }{ 'TABLES' }{ $table }{ 'COLUMNS' }{ $column }{ 'DEFAULT' });
+
+          $return_string .= "\n      $doc_info{ $database }{ 'TABLES' }{ $table }{ 'COLUMNS' }{ $column }{ 'COMMENT' }\n";
+
+        }
+
+       if ($indexes eq 1) {
+
+         for my $index (keys(%{$doc_info{ $database }{ 'TABLES' }{ $table }->{ 'INDEXES' } })) {
+
+            $return_string .= "  $index ($doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEXES' }{ $index }{ 'INDEX_TYPE' } INDEX)\n      ";
+
+            my $column_count = keys %{$doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEXES' }{ $index }{ 'COLUMNS' } };
+
+            if ($column_count gt 1) {
+ 
+              for (my $i = 1; $i < $column_count + 1; $i++) {
+
+                for my $i_col (keys(%{$doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEXES' }{ $index }->{ 'COLUMNS' } })) {
+
+                  if ($doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEXES' }{ $index }{ 'COLUMNS' }{ $i_col }->{ 'SEQ_IN_INDEX' } eq $i) {
+
+                    $return_string .= "$i_col";
+
+                    $return_string .= ($i < $column_count) ? ", " : "\n";
+
+                  }
+
+                }
+
+              }
+
+            } else {
+
+              # This sucks, but I don't know another way
+              for my $s (keys(%{$doc_info{ $database }{ 'TABLES' }{ $table }{ 'INDEXES' }{ $index }{ 'COLUMNS' } })) {
+
+                $return_string .= "$s\n";
+
+              }
+
+            }
+ 
+          }
+
+        }
+
+        if ($triggers eq 1 || $trigger_bodies eq 1) {
+
+          for my $trigger (keys(%{$doc_info{ $database }{ 'TABLES' }{ $table }->{ 'TRIGGERS' } })) {
+
+            $return_string .= "  $trigger (TRIGGER) - $doc_info{ $database }{ 'TABLES' }{ $table }{ 'TRIGGERS' }{ $trigger }{ 'ACTION_TIMING' } $doc_info{ $database }{ 'TABLES' }{ $table }{ 'TRIGGERS' }{ $trigger }{ 'EVENT_MANIPULATION' }\n";
+            $return_string .= "    $doc_info{ $database }{ 'TABLES' }{ $table }{ 'TRIGGERS' }{ $trigger }{ 'ACTION_STATEMENT' }\n" if ($trigger_bodies eq 1);
+
+          }
+
+        }
+
+      }
+
+      if ( $udfs eq 1 || $udf_bodies eq 1 ) {
+  
+        for my $udf (keys(%{$doc_info{ $database }{ 'PROCEDURES' } })) {
+
+          $return_string .= "\n  $udf ($doc_info{ $database }{ 'PROCEDURES' }{ $udf }{ 'ROUTINE_TYPE' })\n";
+          $return_string .= "      $doc_info{ $database }{ 'PROCEDURES' }{ $udf }{ 'ROUTINE_DEFINITION' }\n" if ( $udf_bodies eq 1 ); 
+
+        }     
+
+      }
+
+    }
+
+  }
+
+}
+
+$return_string .= &buildOutputFooters(uc($output));
+
+if ($filename) {
+
+  open(OUTFILE, ">$filename") or die "Can't open $filename for writing : $!";
+  print OUTFILE $return_string;
+  close(OUTFILE);
+
+} else {
+
+  print $return_string;
+
+}
+
+sub getPass {
+
+  print "Password: ";
+  system "stty -echo";
+  chomp(my $passwd = <STDIN>);
+  system "stty echo";
+  print "\n";
+  return $passwd;
+
+}
+
+sub buildOutputHeaders ($$) {
+
+  my $rs;
+
+  switch ($_[0]) {
+
+    case 'HTML' { 
+ 
+      $rs  = '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1" />
+  <title>DATA DICTIONARY FOR: ' .  join(', ', @databases); 
+
+      $rs .= " ($ts)" if ($timestamp eq 1);
+
+      $rs .= "</title>
+  <style type=\"text/css\">
+    body {font-family:Arial;}
+    h1 {text-align:center;}
+    table {margin-bottom:1em;}
+    tr td {border-bottom:1px solid #ccc; 
+           border-right:1px solid #ccc;
+           padding:3px 8px; 
+           border-collapse: collapse;}
+    tr:hover {background-color:#FFFFCC;}
+    th {text-align:left;padding:3px 8px;}
+   </style>\n</head>\n\n<body>\n\n";
+
+    } case 'XML' { 
+
+      $rs = '<?xml version="1.0" encoding="utf-8" ?>
+
+<!DOCTYPE databases [
+  <!ELEMENT databases (database*)>
   <!ELEMENT database (table*)>
   <!ELEMENT table (column*, index*, trigger*)>
   <!ELEMENT column (data_type, default_value, comment)>
@@ -276,396 +692,146 @@ switch (uc($output)) {
   <!ATTLIST indexed_column seq_in_index CDATA #REQUIRED>
   <!ATTLIST trigger name CDATA #REQUIRED>
 
-]>\n";
-   
-    $return_string .= "\n<database name='$database'";
+]>
 
-    $return_string .= " timestamp='$ts'" if ($timestamp eq 1);
+<databases>
+';
 
-    $return_string .= ">\n";
- 
-    for my $table (keys(%table_info)) {
+    } case 'TXT' { }
 
-      $return_string .= "  <table name='$table' type='$table_info{$table}{'TABLE_TYPE'}'";
+  }
 
-      if ($table_info{$table}{'TABLE_TYPE'} ne 'VIEW') {
+  return $rs;
 
-        $return_string .= " engine='$table_info{$table}{'ENGINE'}'" if ($engines eq 1);
-        $return_string .= " total_size='$table_info{$table}{'TOTAL_SIZE'} MB'";
-        $return_string .= " data_size='$table_info{$table}{'DATA_LENGTH'} MB'";
-        $return_string .= " index_size='$table_info{$table}{'INDEX_LENGTH'} MB'"; 
+}
 
-      }
+sub buildOutputFooters ($$) {
 
-      $return_string .= ">\n";
+  my $rs = '';
 
-      for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
+  switch ($_[0]) {
 
-        $return_string .= "    <column name='$column'>\n";
-        $return_string .= "      <data_type>";
+    case 'HTML' {
 
-        $return_string .= formatType($table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}, $table_info{$table}{'COLUMNS'}{$column}{'MAX_LENGTH'});
+      $rs = "\n\n<p>Generated By: <a href='http://code.google.com/p/mysqldoc'>mysqldoc</a> $mysqldoc_version</p>\n\n</body>\n\n</html>";
 
-        $return_string .= "</data_type>\n";
-        $return_string .= "      <default_value>$table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}</default_value>\n"; 
-        $return_string .= "      <comment>$table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}</comment>\n";
-        $return_string .= "    </column>\n";
+    } case 'XML' {
 
-      }
-
-      if ($indexes eq 1) {
-
-        for my $index (keys(%{$table_info{$table}->{'INDEXES'}})) {
-
-          $return_string .= "    <index name='$index'>\n";
-          $return_string .= "      <index_type>$table_info{$table}{'INDEXES'}{$index}{'INDEX_TYPE'}</index_type>\n";
-
-          my $column_count = keys %{$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}};
-
-          if ($column_count gt 1) {
-
-            for (my $i = 1; $i < $column_count + 1; $i++) {
-
-              for my $i_col (keys(%{$table_info{$table}{'INDEXES'}{$index}->{'COLUMNS'}})) {
-
-                if ($table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}{$i_col}->{'SEQ_IN_INDEX'} eq $i) {
-
-                   $return_string .= "      <indexed_column seq_in_index='$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}{$i_col}->{'SEQ_IN_INDEX'}'>$i_col</indexed_column>\n";
-
-                }
-
-              }
-
-            }
-
-          } else {
-
-            # This sucks, but I don't know another way
-            for my $s (keys(%{$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}})) {
-
-              $return_string .= "      <indexed_column seq_in_index='1'>$s</indexed_column>\n";
-
-            }
-
-          }
-
-        $return_string .= "    </index>\n";
-        }
-
-      }
-
-      if ($triggers eq 1 || $trigger_bodies eq 1) {
-
-        for my $trigger (keys(%{$table_info{$table}->{'TRIGGERS'}})) {
-
-          $return_string .= "    <trigger name='$trigger'>\n";
-          $return_string .= "      <action_timing>$table_info{$table}{'TRIGGERS'}{$trigger}{'ACTION_TIMING'}</action_timing>\n";
-          $return_string .= "      <event_manipulation>$table_info{$table}{'TRIGGERS'}{$trigger}{'EVENT_MANIPULATION'}</event_manipulation>\n";
-          $return_string .= "      <action_statement>$table_info{$table}{'TRIGGERS'}{$trigger}{'ACTION_STATEMENT'}</action_statement>\n" if ($trigger_bodies eq 1);
-          $return_string .= "    </trigger>\n";
-
-        }
-
-      }
-
-      $return_string .= "  </table>\n\n";
-
-    }
-
-    $return_string .= "</database>";
-
-  } case 'HTML' {
-
-    $return_string .= '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">' . "\n\n";
-    $return_string .= '<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">';
-    $return_string .= "\n\n<head>\n  <meta http-equiv=\"Content-Type\" content=\"text/html; charset=ISO-8859-1\" />\n  <title>DATA DICTIONARY FOR: $database";
-    $return_string .= " ($ts)" if ($timestamp eq 1);
-    $return_string .= "</title>\n  <style type=\"text/css\">
-    body {font-family:Arial;}
-    h1 {text-align:center;}
-    tr td {border-bottom:1px solid #ccc;border-right:1px dashed #ccc;padding:3px 8px;}
-    tr:hover {background-color:#FFFFCC;}
-    th {text-align:left;padding:3px 8px;}
-  </style>\n</head>\n\n<body>\n\n";
-
-    $return_string .= "  <h1><strong>DATA DICTIONARY FOR: $database";
-    $return_string .= " ($ts)" if ($timestamp eq 1);
-    $return_string .= "</strong></h1>\n";
-
-    for my $table (keys(%table_info)) {
-
-      $return_string .= ($table_info{$table}{'TABLE_TYPE'} ne 'VIEW') ? "  <dl>\n    <dt>Table Name</dt>\n      <dd>$table " : "  <dl>\n    <dt>View Name</dt>\n      <dd>$table ";
-
-      $return_string .= "- ($table_info{$table}{'TABLE_TYPE'}";
-
-      if ($engines eq 1 && $table_info{$table}{'TABLE_TYPE'} ne 'VIEW') {
-
-        $return_string .= " ";
-
-        if ($links eq 1) {
-
-          switch ($table_info{$table}{'ENGINE'}) {
-
-            case 'InnoDB' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/innodb.html'>"; }
-            case 'MyISAM' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/myisam-storage-engine.html'>"; }
-            case 'MEMORY' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/memory-storage-engine.html'>"; } 
-            case 'MERGE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/merge-storage-engine.html'>"; }
-            case 'BDB' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/bdb-storage-engine.html'>"; }
-            case 'EXAMPLE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/example-storage-engine.html'>"; }
-            case 'FEDERATED' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/federated-storage-engine.html'>"; }
-            case 'ARCHIVE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/archive-storage-engine.html'>"; }
-            case 'CSV' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/csv-storage-engine.html'>"; }
-            case 'BLACKHOLE' { $return_string .= "<a href='http://dev.mysql.com/doc/refman/$mysql_version/en/blackhole-storage-engine.html'>"; }
-          
-          }
-     
-        }
-
-        $return_string .= "$table_info{$table}{'ENGINE'}";
-
-        $return_string .= "</a>" if ($links eq 1);
-
-      }
-
-      $return_string .= ")</dd>\n";
-
-      if ($table_info{$table}{'TABLE_TYPE'} ne 'VIEW') {
-
-        $return_string .= "    <dt>Table Stats</dt>\n      <dd>$table_info{$table}{'TOTAL_SIZE'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)</dd>\n";
-
-        $return_string .= "    <dt>Table Contents</dt>\n      <dd>$table_info{$table}{'COMMENT'}</dd>\n" if ($table_info{$table}{'COMMENT'});
-
-      }
-
-      $return_string .= "  </dl>\n  <table border=\"0\" cellpadding=\"0\" cellspacing=\"0\">
-    <tr>
-      <th>Column Name</th>
-      <th>Data Type</th>
-      <th>Default Value</th>
-      <th>Description</th>
-    </tr>\n";
- 
-      for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
-
-        $return_string .= "    <tr>\n      <th>$column</th>\n      <th>"; 
-        $return_string .= formatType($table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}, $table_info{$table}{'COLUMNS'}{$column}{'MAX_LENGTH'});
-        $return_string .= "</th>\n      <th>$table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}" if ($table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'});
-
-        $return_string .= "</th>\n";
-
-        $return_string .= "      <th>$table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}</th>\n" if ($table_info{$table}{'COLUMNS'}{$column}{'COMMENT'});
-        $return_string .= "    </tr>\n";
-
-      }
-
-      $return_string .= "  </table>\n";
-
-      if ($indexes eq 1) {
-
-        $return_string .= "  <table border=\"0\" cellpadding=\"0\" cellspacing=\"0\">
-    <tr>
-      <th>Index Name</th>
-      <th>Index Type</th>
-      <th>Affected Column(s)</th>
-    </tr>\n";
-
-        for my $index (keys(%{$table_info{$table}->{'INDEXES'}})) {
-
-          $return_string .= "    <tr>\n     <th>$index</th>\n      <th>$table_info{$table}{'INDEXES'}{$index}{'INDEX_TYPE'}</th>\n      <th>";
-
-          my $column_count = keys %{$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}};
-
-          if ($column_count gt 1) {
-
-            for (my $i = 1; $i < $column_count + 1; $i++) {
-
-              for my $i_col (keys(%{$table_info{$table}{'INDEXES'}{$index}->{'COLUMNS'}})) {
-
-                if ($table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}{$i_col}->{'SEQ_IN_INDEX'} eq $i) {
-
-                  $return_string .= "$i_col";
-
-                  $return_string .= ($i < $column_count) ? ", " : "</th>\n    </tr>\n";
-
-                }
-
-              }
-
-            }
-
-          } else {
-
-            # This sucks, but I don't know another way
-            for my $s (keys(%{$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}})) {
-
-              $return_string .= "$s</th>\n    </tr>\n\n";
-
-            }
-
-          }
-
-        }
-
-        $return_string .= "  </table>\n";
-
-      }
-
-      if ($triggers eq 1 || $trigger_bodies eq 1) {
-
-        my $trigger_count = keys %{$table_info{$table}{'TRIGGERS'}};
-
-        if ($trigger_count gt 0) {
-
-          $return_string .= "  <table border=\"0\" cellpadding=\"0\" cellspacing=\"0\">
-    <tr>
-      <th>Trigger Name</th>
-      <th>Action Timing</th>
-      <th>Event Manipulation</th>\n";
-        $return_string .= "      <th>Body</th>\n" if ($trigger_bodies eq 1);
-        $return_string .= "    </tr>\n";
-
-          for my $trigger (keys(%{$table_info{$table}->{'TRIGGERS'}})) {
-
-            $return_string .= "    <tr>\n      <th>$trigger</th>\n";
-            $return_string .= "      <th>$table_info{$table}{'TRIGGERS'}{$trigger}{'ACTION_TIMING'}</th>\n";
-            $return_string .= "      <th>$table_info{$table}{'TRIGGERS'}{$trigger}{'EVENT_MANIPULATION'}</th>\n";
-            $return_string .= "      <th><pre>$table_info{$table}{'TRIGGERS'}{$trigger}{'ACTION_STATEMENT'}</pre></th>\n" if ($trigger_bodies eq 1);
-            $return_string .= "    </tr>\n";
-
-          }
-
-          $return_string .= "  </table>\n";
-
-        }
-
-      }
-
-    }
-
-    $return_string .= "\n\n</body>\n\n</html>";
-
-  } else {
-
-    $return_string .= "\nDATA DICTIONARY FOR: $database";
-    $return_string .= " ($ts)" if ($timestamp eq 1);
-    $return_string .= "\n\n";
-
-    for my $table (keys(%table_info)) {
-
-      $return_string .= "$table - ($table_info{$table}{'TABLE_TYPE'}";
-
-      $return_string .= " $table_info{$table}{'ENGINE'}" if ($engines eq 1 && $table_info{$table}{'TABLE_TYPE'} ne 'VIEW');
-
-      $return_string .= ") $table_info{$table}{'total_size'} MB (DATA: $table_info{$table}{'DATA_LENGTH'} MB, INDEX: $table_info{$table}{'INDEX_LENGTH'} MB)\n";
-      $return_string .= "  $table_info{$table}{'COMMENT'}\n";
-       
-      for my $column (keys(%{$table_info{$table}->{'COLUMNS'}})) {
-
-        $return_string .= "  $column - ";
-        $return_string .= formatType($table_info{$table}{'COLUMNS'}{$column}{'DATA_TYPE'}, $table_info{$table}{'COLUMNS'}{$column}{'MAX_LENGTH'});
-
-        $return_string .= "  DEFAULT $table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'}" if ($table_info{$table}{'COLUMNS'}{$column}{'DEFAULT'});
-
-        $return_string .= "\n      $table_info{$table}{'COLUMNS'}{$column}{'COMMENT'}\n";
-
-      }
-
-      if ($indexes eq 1) {
-
-        for my $index (keys(%{$table_info{$table}->{'INDEXES'}})) {
-
-          $return_string .= "  $index ($table_info{$table}{'INDEXES'}{$index}{'INDEX_TYPE'} INDEX)\n      ";
-
-          my $column_count = keys %{$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}};
-
-          if ($column_count gt 1) {
- 
-            for (my $i = 1; $i < $column_count + 1; $i++) {
-
-              for my $i_col (keys(%{$table_info{$table}{'INDEXES'}{$index}->{'COLUMNS'}})) {
-
-                if ($table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}{$i_col}->{'SEQ_IN_INDEX'} eq $i) {
-
-                  $return_string .= "$i_col";
-
-                  $return_string .= ($i < $column_count) ? ", " : "\n";
-
-                }
-
-              }
-
-            }
-
-          } else {
-
-            # This sucks, but I don't know another way
-            for my $s (keys(%{$table_info{$table}{'INDEXES'}{$index}{'COLUMNS'}})) {
-
-              $return_string .= "$s\n";
-
-            }
-
-          }
- 
-        }
-
-      }
-
-      if ($triggers eq 1 || $trigger_bodies eq 1) {
-
-        for my $trigger (keys(%{$table_info{$table}->{'TRIGGERS'}})) {
-
-          $return_string .= "  $trigger (TRIGGER) - $table_info{$table}{'TRIGGERS'}{$trigger}{'ACTION_TIMING'} $table_info{$table}{'TRIGGERS'}{$trigger}{'EVENT_MANIPULATION'}\n";
-          $return_string .= "      $table_info{$table}{'TRIGGERS'}{$trigger}{'ACTION_STATEMENT'}\n" if ($trigger_bodies eq 1);
-
-        }
-
-      }
+      $rs = '</databases>';
 
     }
 
   }
 
+  return $rs;
+ 
 }
 
-if ($filename) {
+sub getBaseInfo($$) {
 
-  open(OUTFILE, ">$filename") or die "Can't open $filename for writing : $!";
-  print OUTFILE $return_string;
-  close(OUTFILE);
+  my $database = $_[0];
 
-} else {
+  my $query = $dbh->prepare("SELECT `t`.`TABLE_NAME`, 
+                                    `t`.`TABLE_TYPE`, 
+                                    `t`.`ENGINE`, 
+                                    IFNULL(`t`.`DATA_LENGTH`, 0) AS `DATA_LENGTH`, 
+                                    IFNULL(`t`.`INDEX_LENGTH`, 0) AS `INDEX_LENGTH`, 
+                                    `t`.`TABLE_COMMENT`,        
+                                    `c`.`COLUMN_NAME`,
+                                    `c`.`COLUMN_TYPE`,
+                                    IFNULL(`c`.`CHARACTER_MAXIMUM_LENGTH`, `c`.`NUMERIC_PRECISION`) AS `MAX_LENGTH`,
+                                    IFNULL(`c`.`COLUMN_DEFAULT`, IF(`c`.`IS_NULLABLE` = 'NO','','NULL')) AS `COLUMN_DEFAULT`,
+                                    `c`.`COLUMN_COMMENT`
+                                FROM `INFORMATION_SCHEMA`.`TABLES` `t` 
+                                JOIN `INFORMATION_SCHEMA`.`COLUMNS` `c` ON (`t`.`TABLE_SCHEMA` = `c`.`TABLE_SCHEMA` AND `t`.`TABLE_NAME` = `c`.`TABLE_NAME`)     
+                                  WHERE `t`.`TABLE_SCHEMA` = \"$database\"") or die "Couldn't prepare statement: " . $dbh->errstr;
 
-  print $return_string;
+  $query->execute() or die "Couldn't execute statement: " . $dbh->errstr;
+
+  while (my $ref = $query->fetchrow_hashref()) {
+
+    unless (exists($doc_info{ $database }{ 'TABLES' }{ $ref->{ 'TABLE_NAME' } })) {
+
+      $doc_info{ $database }{ 'TABLES' }{ $ref->{ 'TABLE_NAME' } } = { 'TABLE_TYPE'   => $ref->{ 'TABLE_TYPE' },
+                                                                       'ENGINE'       => $ref->{ 'ENGINE' },
+                                                                       'TOTAL_SIZE'   => $ref->{ 'DATA_LENGTH' } + $ref->{ 'INDEX_LENGTH' },
+                                                                       'DATA_LENGTH'  => $ref->{ 'DATA_LENGTH' },
+                                                                       'INDEX_LENGTH' => $ref->{ 'INDEX_LENGTH' },
+                                                                       'COMMENT'      => $ref->{ 'TABLE_COMMENT' } };
+
+    }
+
+    $doc_info{ $database }{ 'TABLES' }{ $ref->{ 'TABLE_NAME' } }{ 'COLUMNS' }{ $ref->{ 'COLUMN_NAME' } } =  { 'DATA_TYPE'  => $ref->{ 'COLUMN_TYPE' },
+                                                                                                              'MAX_LENGTH' => $ref->{ 'MAX_LENGTH' },
+                                                                                                              'DEFAULT'    => $ref->{ 'COLUMN_DEFAULT' },
+                                                                                                              'COMMENT'    => $ref->{ 'COLUMN_COMMENT' } };
+  
+  }
 
 }
 
-sub getPass {
+sub getIndexInfo($$) {
 
-  print "Password: ";
-  system "stty -echo";
-  chomp(my $passwd = <STDIN>);
-  system "stty echo";
-  print "\n";
-  return $passwd;
+  my $database = $_[0];
+  my $table_name = $_[1];
+
+  my $index_query = $dbh->prepare("SELECT `INDEX_NAME`, `COLUMN_NAME`, `SEQ_IN_INDEX` FROM `INFORMATION_SCHEMA`.`STATISTICS`
+                                   WHERE `TABLE_SCHEMA` = \"$database\" AND `TABLE_NAME` = \"$table_name\" GROUP BY `INDEX_NAME`,
+                                   `COLUMN_NAME` ORDER BY `INDEX_NAME`, `SEQ_IN_INDEX`") or die "Couldn't prepare statement: " . $dbh->errstr;
+
+  $index_query->execute() or die "Couldn't execute statement: " . $dbh->errstr;
+
+  while (my $ref = $index_query->fetchrow_hashref()) {
+
+    $doc_info{ $database }{ 'TABLES' }{ $table_name }{ 'INDEXES '}{ $ref->{ 'INDEX_NAME' } }{ 'COLUMNS' }{ $ref->{ 'COLUMN_NAME' } } = { 'SEQ_IN_INDEX' => $ref->{ 'SEQ_IN_INDEX' } };
+
+  }
+
+  for my $index (keys(%{$doc_info{ $database }{ 'TABLES' }{ $table_name }{ 'INDEXES' } })) {
+
+    my $itq = $dbh->prepare("SELECT DISTINCT `INDEX_TYPE` FROM `INFORMATION_SCHEMA`.`STATISTICS` WHERE `TABLE_SCHEMA` = \"$database\" AND
+                            `TABLE_NAME` = \"$table_name\" AND `INDEX_NAME` = \"$index\"") or die "Couldn't prepare statement: " . $dbh->errstr;
+
+    $itq->execute() or die "Couldn't execute statement: " . $dbh->errstr;
+
+    $doc_info{ $database }{ 'TABLES' }{ $table_name }{ 'INDEXES' }{ $index }{ 'INDEX_TYPE' } =  $itq->fetchrow();
+
+  }
 
 }
 
-sub formatType {
+sub getTriggerInfo($$) {
 
-  my $dt = $_[0];
-  my $mv = $_[1];
+  my $database = $_[0];
+  my $table_name = $_[1];
 
-  if (uc($dt) eq 'CHAR' || uc($dt) eq 'VARCHAR' || 
-      uc($dt) eq 'TINYINT' || uc($dt) eq 'SMALLINT' || 
-      uc($dt) eq 'MEDIUMINT' || uc($dt) eq 'INT' || 
-      uc($dt) eq 'BIGINT') {
+  my $trigger_query = $dbh->prepare("SELECT `trigger_name`, `action_timing`, `event_manipulation`, `action_statement` FROM `INFORMATION_SCHEMA`.`TRIGGERS`
+                                    WHERE `TRIGGER_SCHEMA` = \"$database\" AND `EVENT_OBJECT_TABLE` = \"$table_name\"") or die "Couldn't prepare statement: " . $dbh->errstr;
 
-    return "$dt($mv)";
+  $trigger_query->execute() or die "Couldn't execute statement: " . $dbh->errstr;
 
-  } else {
+  while (my $ref = $trigger_query->fetchrow_hashref()) {
 
-    return $dt;
+    $doc_info{ $database }{ 'TABLES' }{ $table_name }{ 'TRIGGERS' }{ $ref->{ 'trigger_name' } } = { 'ACTION_TIMING'      => $ref->{ 'action_timing' },
+                                                                                                    'EVENT_MANIPULATION' => $ref->{ 'event_manipulation' },
+                                                                                                    'ACTION_STATEMENT'   => $ref->{ 'action_statement' } };
+
+  }
+
+}
+
+sub getUdfInfo($$) {
+
+  my $database = $_[0];
+
+  my $udf_query = $dbh->prepare("SELECT `ROUTINE_NAME`, `ROUTINE_TYPE`, `ROUTINE_DEFINITION` FROM `INFORMATION_SCHEMA`.`ROUTINES` WHERE `ROUTINE_SCHEMA` = \"$database\"") or die "Couldn't prepare statement: " . $dbh->errstr;
+
+  $udf_query->execute() or die "Couldn't execute statement: " . $dbh->errstr;
+
+  while (my $ref = $udf_query->fetchrow_hashref()) {
+
+    $doc_info{ $database }{ 'PROCEDURES' }{ $ref->{ 'ROUTINE_NAME' } } = { 'ROUTINE_TYPE'       => $ref->{ 'ROUTINE_TYPE' },
+                                                                           'ROUTINE_DEFINITION' => $ref->{ 'ROUTINE_DEFINITION' } };
 
   }
 
