@@ -1,3 +1,14 @@
+0.0.7 - 06 January 2008
+
+  - Fixed some HTML and CSS issues
+  - Added version information in the HTML footer
+  - Columns now show enum and set values
+  - Columns now show double and float arguments
+  - Cleaned up the code a bit
+  - Now supports multiple databases
+  - Added the --show-udf command line option
+  - Added the --show-udf-bodies command line option
+
 0.0.6 - 30 December 2007
 
   - Added the --timestamp command line option
