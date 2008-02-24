@@ -1,3 +1,11 @@
+0.0.8 - 23 February 2008
+
+  - Added the --socket command line option
+  - Changed &getPass to print to STDOUT so that the output can be redirected via the unix >
+  - Fixed it so that columns always show up in the correct order
+  - Added the --show-size command line option
+  - Added the --no-show-size command line option
+
 0.0.7 - 23 January 2008
 
   - Fixed some HTML and CSS issues
