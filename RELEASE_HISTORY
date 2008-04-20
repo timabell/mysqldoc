@@ -1,14 +1,10 @@
-0.0.9 - ??
+0.0.9 - 20 April 2008
 
-  - Output is now entirely based on XSLT (yay)
-    This means that many command-line options have been removed and will be displayed according to XSL tags
-    ([no-]show-size, --show-udf[-bodies], --show-trigger[-bodies], --[no-]show-indexes, --[no-]show-engines, --[no-]html-links)
-    It also means that new perl modules are required (XML::XSLT, Config::General)
-  - Package now includes install.sh
-  - Slimmed down the program (~40% smaller)
-    The Switch perl module is no longer required
-  - Options can be set via a configuration file (defaults to /etc/mysqldoc.cnf)
-  - Improved error handling 
+  - Added support for connecting via ssl
+  - If no databases are specified, mysqldoc will now generate docs for all databases on the specified instance (excluding mysql and information_schema databases)
+  - Instead of defaulting the user to root, in defaults to the user running the script
+  - Short command line options are now accepted
+  - Began prepping the code base for 0.1.0
 
 0.0.8 - 23 February 2008
 
