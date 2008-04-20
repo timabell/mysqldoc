@@ -1,4 +1,4 @@
-#!/opt/local/bin/perl
+#!/usr/bin/perl
 
 # This is mysqldoc, a program designed to auto-document MySQL schema.
 #
@@ -29,6 +29,7 @@ use English qw ( -no_match_vars );
 #use Error qw ( :try ); # Will need for later versions
 use Switch;  # Bye soon!!!!!
 use DBI;
+use DBD::mysql;
 
 sub get_pass;
 sub build_headers;
@@ -36,6 +37,7 @@ sub build_footers;
 sub get_schema_info;
 sub convert_storage;
 sub ascend_num;
+sub get_databases;
 
 my $PROGRAM = 'mysqldoc';
 my $VERSION = '0.0.9';
@@ -44,8 +46,6 @@ my $WEBSITE = 'http://code.google.com/p/mysqldoc';
 ################################################################################
 # Get configuration information, setting sane defaults
 ################################################################################
-
-pod2usage ( 2 ) if ( $#ARGV eq -1 );
 
 my %options;
 
@@ -84,6 +84,12 @@ if ( !$gop->getoptions (
   'show-udf!'          => \$options { 'udfs' },
   'show-udf-body!'     => \$options { 'udf_bodies' },
   'socket=s'           => \$options { 'socket' },
+  'ssl'                => \$options { 'ssl' },
+  'ssl-ca=s'           => \$options { 'ssl-ca' },
+  'ssl-capath=s'       => \$options { 'ssl-capath' },
+  'ssl-cert=s'         => \$options { 'ssl-cert' },
+  'ssl-cipher=s'       => \$options { 'ssl-cipher' },
+  'ssl-key=s'          => \$options { 'ssl-key' },
   'tables=s'           => \@included_tables,
   'ignore-tables=s'    => \@excluded_tables,
   'user|u:s'           => \$options { 'user' },
@@ -112,7 +118,7 @@ if ( $options { 'defaults' } ) {
 
 ATTRIBUTE                  VALUE
 -------------------------- ------------------
-databases                  (No default value)
+databases                  ALL (excluding `mysql` and `information_schema`)
 help                       FALSE
 host                       localhost            
 html-links                 TRUE
@@ -128,6 +134,12 @@ show-trigger-body          FALSE
 show-udf                   FALSE
 show-udf-body              FALSE
 socket                     (No default value)
+ssl                        FALSE
+ssl-ca                     (No default value)
+ssl-capath                 (No default value)
+ssl-cert                   (No default value)
+ssl-cipher                 (No default value)
+ssl-key                    (No default value)
 tables                     (No default value)
 ignore-tables              (No default value)
 user                       Current user       
@@ -165,6 +177,23 @@ if ( $options { 'socket' } ) {
 
 }
 
+if ( $options { 'ssl' } ||
+     $options { 'ssl-ca' } ||
+     $options { 'ssl-capath' } ||
+     $options { 'ssl-cert' } ||
+     $options { 'ssl-cipher' } ||
+     $options { 'ssl-key' } ) {
+
+  $connection_string .= ';mysql_ssl=1';
+
+  $connection_string .= ';mysql_ssl_client_key=' . $options { 'ssl-key' } if ( $options { 'ssl-key' } );
+  $connection_string .= ';mysql_ssl_client_cert=' . $options { 'ssl-cert' } if ( $options { 'ssl-cert' } );
+  $connection_string .= ';mysql_ssl_ca_file=' . $options { 'ssl-ca' } if ( $options { 'ssl-ca' } );
+  $connection_string .= ';mysql_ssl_ca_path=' . $options { 'ssl-capath' } if ( $options { 'ssl-capath' } );
+  $connection_string .= ';mysql_ssl_cipher=' . $options { 'ssl-cipher' } if ( $options { 'ssl-cipher' } );
+
+}
+
 my $dbh = DBI->connect($connection_string, $options { 'user' }, $options { 'password' });
 
 my $mvq = $dbh->prepare("SELECT SUBSTRING(\@\@version, 1, 3) mysql_version") 
@@ -178,6 +207,8 @@ $tsq->execute() or die "Couldn't execute statement: " . $dbh->errstr;
 my $ts = $tsq->fetchrow();
 
 my %doc_info = ();
+
+$options { 'databases' } = join ( ',', &get_databases ) if ( !$options { 'databases' } );
 
 foreach my $database ( split/,/, join ( ',', $options{ 'databases' } ) ) {
 
@@ -914,6 +945,24 @@ sub convertStorage($$) {
 
 }
 
+sub get_databases {
+
+  my $sql = 'SELECT DISTINCT `schemata`.`schema_name` FROM `information_schema`.`schemata` WHERE `schemata`.`schema_name` NOT IN ("mysql", "information_schema")';
+
+  my $query = $dbh->prepare ( $sql ) or die "Couldn't prepare statement: " . $dbh->errstr;
+  $query->execute ( ) or die "Couldn't execute statement: " . $dbh->errstr;
+
+  my @ra;
+  while ( my $db = $query->fetchrow ) {
+
+    push ( @ra, $db ); 
+
+  }
+
+  return @ra;
+
+}
+
 ################################################################################
 # Documentation
 ################################################################################
@@ -922,11 +971,11 @@ sub convertStorage($$) {
 
 =head1 NAME
 
-$PROGRAM - Auto-documentation for mysql schema
+mysqldoc - Auto-documentation for mysql schema
 
 =head1 SYNOPSIS
 
-$_PROGRAM [options]
+mysqldoc [options]
 
   Options:
     --databases=database[,<database>[,...]]
@@ -957,6 +1006,14 @@ $_PROGRAM [options]
     --show-udf-body              Show UDF bodies (implies --show-udf).
     --no-show-udf-body           Do not show UDF bodies.
     --socket                     Socket file to use for connection.
+    --ssl                        Enable SSL for connection (automatically enabled with
+                                 other flags). 
+    --ssl-ca=name                CA file in PEM format (check OpenSSL docs, implies
+                                 --ssl).
+    --ssl-capath=name            CA directory (check OpenSSL docs, implies --ssl).
+    --ssl-cert=name              X509 cert in PEM format (implies --ssl).
+    --ssl-cipher=name            SSL cipher to use (implies --ssl).
+    --ssl-key=name               X509 key in PEM format (implies --ssl).
     --tables=<table>[,<table>[,...]]
                                  Enumerated list of tables for the script to be run against.
                                  Each table must be specified with both database and table
@@ -972,7 +1029,7 @@ $_PROGRAM [options]
 
  ATTRIBUTE                  VALUE
  -------------------------- ------------------
- databases                  (No default value)
+ databases                  ALL (excluding `mysql` and `information_schema`)
  help                       FALSE
  host                       localhost     
  html-links                 TRUE 
@@ -988,6 +1045,12 @@ $_PROGRAM [options]
  show-udf                   FALSE
  show-udf-body              FALSE
  socket                     (No default value)
+ ssl                        FALSE
+ ssl-ca                     (No default value)
+ ssl-capath                 (No default value)
+ ssl-cert                   (No default value)
+ ssl-cipher                 (No default value)
+ ssl-key                    (No default value)
  tables                     (No default value)
  ignore-tables              (No default value)
  user                       Current user 
@@ -995,7 +1058,7 @@ $_PROGRAM [options]
 
 =head1 DESCRIPTION
 
-$PROGRAM is a tool for auto-documentation generation for MySQL 5.0 and above
+mysqldoc is a tool for auto-documentation generation for MySQL 5.0 and above
 
 =head1 ENVIRONMENT
 
@@ -1003,12 +1066,13 @@ The environment variable C<MYSQLDOC_HOME> points to the parent directory of the 
 
 =head1 SYSTEM REQUIREMENTS
 
-$PROGRAM $VERSION requires the following Perl modules:
+mysqldoc 0.0.9 requires the following Perl modules:
 
   DBI
   DBD::mysql
   Pod::Usage
   Getopt::Long
+  Switch
 
 =head1 BUGS
 
@@ -1039,7 +1103,7 @@ Ryan Lowe (ryan.a.lowe@gmail.com)
 
 =head1 VERSION
 
-This manual page documents $VERSION of $PROGRAM.
+This manual page documents 0.0.9 of mysqldoc.
 
 =cut
 
