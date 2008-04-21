@@ -257,7 +257,7 @@ for my $database (keys %doc_info) {
 
       $return_string .= ">\n";
  
-      for my $table (keys(%{$doc_info{ $database }{ 'TABLES' } })) {
+      for my $table (sort(keys(%{$doc_info{ $database }{ 'TABLES' } }))) {
 
         $return_string .= "  <table name='$table' type='$doc_info{ $database }{ 'TABLES' }{ $table }{ 'TABLE_TYPE' }'"; 
 
