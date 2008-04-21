@@ -270,7 +270,7 @@ for my $database (keys %doc_info) {
 
         }
 
-        $return_string .= ">\n";
+        $return_string .= " comment='$doc_info{ $database }{ 'TABLES' }{ $table }{ 'COMMENT' }'>\n";
 
         for my $column (sort ascend_num keys %{$doc_info{ $database }{ 'TABLES' }{ $table }{ 'COLUMNS' } }) {
 
