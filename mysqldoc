@@ -271,7 +271,11 @@ for my $database (keys %doc_info) {
 
         }
 
-        $return_string .= " comment='$doc_info{ $database }{ 'TABLES' }{ $table }{ 'COMMENT' }'>\n";
+				#replace ' with '' to prevent breakage of attribute delimiting if table comment contains apostrophes.
+        my $table_comment = $doc_info{ $database }{ 'TABLES' }{ $table }{ 'COMMENT' };
+        $table_comment =~ s/\'/&apos;/g;
+
+        $return_string .= " comment='$table_comment'>\n";
 
         for my $column (sort ascend_num keys %{$doc_info{ $database }{ 'TABLES' }{ $table }{ 'COLUMNS' } }) {
 
