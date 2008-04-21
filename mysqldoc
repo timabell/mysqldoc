@@ -73,6 +73,7 @@ if ( !$gop->getoptions (
   'html-links!'        => \$options { 'links' },
   'show-indexes!'      => \$options { 'indexes' },
   'output=s'           => sub { $options { 'output' } = uc ( $_[1] ); },,
+  'stylesheet=s'      => \$options { 'stylesheet' },
   'password|p:s'       => sub { $options { 'password' } = $_[1] ? $_[1] : &get_pass; },
   'port=i'             => \$options { 'port' },
   'print-defaults'     => \$options { 'defaults' },
@@ -695,8 +696,15 @@ sub buildOutputHeaders ($$) {
     } case 'XML' { 
 
       $rs = '<?xml version="1.0" encoding="utf-8" ?>
-
-<!DOCTYPE databases [
+';
+			if ($options { 'stylesheet' })
+			{
+				$rs .= '<?xml-stylesheet type="text/xsl" href="';
+				$rs .= $options { 'stylesheet' };
+				$rs .= '"?>
+';
+			}
+			$rs .= '<!DOCTYPE databases [
   <!ELEMENT databases (database*)>
   <!ELEMENT database (table*)>
   <!ELEMENT table (column*, index*, trigger*)>
@@ -986,6 +994,7 @@ mysqldoc [options]
                                  relevant MySQL documentation.
     --no-html-links              Do not include links to MySQL documentation.
     --output=[XML | HTML | TXT]  The format in which to generate the output.
+    --stylesheet=<filename>      xslt stylesheet for to link to in the xml output.
     --password[=<password>]      Password to use when connecting to server. If password is
                                  not given, it is asked from the tty.
     --port=#                     Port number to use for connection.
