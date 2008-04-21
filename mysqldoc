@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 
 # This is mysqldoc, a program designed to auto-document MySQL schema.
+# http://code.google.com/p/mysqldoc/
 #
 # This program is copyright (c) 2007 Ryan Lowe.
 # Feedback and improvements are welcome (ryan.a.lowe@gmail.com)
