@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/opt/local/bin/perl
 
 # This is mysqldoc, a program designed to auto-document MySQL schema.
 #
@@ -23,24 +23,16 @@ use strict;
 use warnings FATAL => 'all';
 use Pod::Usage;
 use Getopt::Long qw ( :config no_ignore_case bundling );
-#use XML::Simple; # Will need for later versions
-#use XML::XSLT; # Will need for later versions
+use XML::Simple; 
+#use XML::XSLT; 
 use English qw ( -no_match_vars );
-#use Error qw ( :try ); # Will need for later versions
-use Switch;  # Bye soon!!!!!
+#use Error qw ( :try ); 
 use DBI;
 use DBD::mysql;
-
-sub get_pass;
-sub build_headers;
-sub build_footers;
-sub get_schema_info;
-sub convert_storage;
-sub ascend_num;
-sub get_databases;
+use Switch;
 
 my $PROGRAM = 'mysqldoc';
-my $VERSION = '0.0.9';
+my $VERSION = '0.1.0';
 my $WEBSITE = 'http://code.google.com/p/mysqldoc';
 
 ################################################################################
@@ -73,7 +65,8 @@ if ( !$gop->getoptions (
   'html-links!'        => \$options { 'links' },
   'show-indexes!'      => \$options { 'indexes' },
   'output=s'           => sub { $options { 'output' } = uc ( $_[1] ); },,
-  'password|p:s'       => sub { $options { 'password' } = $_[1] ? $_[1] : &get_pass; },
+  'password|p:s'       => sub { $options { 'password' } = $_[1] ? $_[1] : 
+                                                                  &get_pass; },
   'port=i'             => \$options { 'port' },
   'print-defaults'     => \$options { 'defaults' },
   'show-engines!'      => \$options { 'engines' },
@@ -107,7 +100,7 @@ pod2usage ( 2 ) if $options { 'help' };
 
 if ( $options { 'version' } ) {
 
-  print $PROGRAM . ' ' . $VERSION . ' (Check for updates at: ' . $WEBSITE . ")\n";
+  print "$PROGRAM $VERSION (Check for updates at: $WEBSITE)\n";
   exit;
 
 }
@@ -169,7 +162,8 @@ if ($no_storage eq -1) {
 
 }
 
-my $connection_string = "dbi:mysql:;host=" . $options { 'host' } . ";port=" . $options { 'port' };
+my $connection_string = "dbi:mysql:;host=" . $options { 'host' } . 
+                        ";port=" . $options { 'port' };
 
 if ( $options { 'socket' } ) {
 
@@ -186,15 +180,22 @@ if ( $options { 'ssl' } ||
 
   $connection_string .= ';mysql_ssl=1';
 
-  $connection_string .= ';mysql_ssl_client_key=' . $options { 'ssl-key' } if ( $options { 'ssl-key' } );
-  $connection_string .= ';mysql_ssl_client_cert=' . $options { 'ssl-cert' } if ( $options { 'ssl-cert' } );
-  $connection_string .= ';mysql_ssl_ca_file=' . $options { 'ssl-ca' } if ( $options { 'ssl-ca' } );
-  $connection_string .= ';mysql_ssl_ca_path=' . $options { 'ssl-capath' } if ( $options { 'ssl-capath' } );
-  $connection_string .= ';mysql_ssl_cipher=' . $options { 'ssl-cipher' } if ( $options { 'ssl-cipher' } );
+  $connection_string .= ';mysql_ssl_client_key=' . $options { 'ssl-key' } 
+    if ( $options { 'ssl-key' } );
+  $connection_string .= ';mysql_ssl_client_cert=' . $options { 'ssl-cert' } 
+    if ( $options { 'ssl-cert' } );
+  $connection_string .= ';mysql_ssl_ca_file=' . $options { 'ssl-ca' } 
+    if ( $options { 'ssl-ca' } );
+  $connection_string .= ';mysql_ssl_ca_path=' . $options { 'ssl-capath' } 
+    if ( $options { 'ssl-capath' } );
+  $connection_string .= ';mysql_ssl_cipher=' . $options { 'ssl-cipher' } 
+    if ( $options { 'ssl-cipher' } );
 
 }
 
-my $dbh = DBI->connect($connection_string, $options { 'user' }, $options { 'password' });
+my $dbh = DBI->connect ( $connection_string, 
+                         $options { 'user' }, 
+                         $options { 'password' } );
 
 my $mvq = $dbh->prepare("SELECT SUBSTRING(\@\@version, 1, 3) mysql_version") 
                         or die "Couldn't prepare statement: " . $dbh->errstr;
@@ -208,7 +209,8 @@ my $ts = $tsq->fetchrow();
 
 my %doc_info = ();
 
-$options { 'databases' } = join ( ',', &get_databases ) if ( !$options { 'databases' } );
+$options { 'databases' } = join ( ',', &get_databases ) 
+  if ( !$options { 'databases' } );
 
 foreach my $database ( split/,/, join ( ',', $options{ 'databases' } ) ) {
 
@@ -234,14 +236,12 @@ foreach my $database ( split/,/, join ( ',', $options{ 'databases' } ) ) {
 
   }
 
-  &getUdfInfo ( $database ) if ( $options { 'udfs' } || $options { 'udf_bodies' } );
+  &getUdfInfo ( $database ) 
+    if ( $options { 'udfs' } || $options { 'udf_bodies' } );
 
 }
 
-# FOR DEBUG
-#use Data::Dumper;
-#print Dumper(%doc_info);
-#exit;
+print XMLOut(\%doc_info);
 
 my $return_string = &buildOutputHeaders ( $options { 'output' } );
 
@@ -1066,13 +1066,12 @@ The environment variable C<MYSQLDOC_HOME> points to the parent directory of the 
 
 =head1 SYSTEM REQUIREMENTS
 
-mysqldoc 0.0.9 requires the following Perl modules:
+mysqldoc 0.1.0 requires the following Perl modules:
 
   DBI
   DBD::mysql
   Pod::Usage
   Getopt::Long
-  Switch
 
 =head1 BUGS
 
